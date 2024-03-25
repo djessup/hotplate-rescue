@@ -2,18 +2,18 @@
 // Created by DJ on 1/12/2023.
 
 #include "main.h"
+//#include "adc.h"
 #include <EEPROM.h>
-#include <AceButton.h>
 #include "EnableInterrupt.h"
+#include "settings.h"
 
-using namespace ace_button;
 
 #define PIN_TEMP PIN_A0
 #define PIN_ISENSE PIN_A1
 #define PIN_HEATER 3
-#define PIN_BTN_UP 10
+// #define PIN_BTN_UP 10
 #define PIN_BTN_OK 7
-#define PIN_BTN_DOWN 8
+// #define PIN_BTN_DOWN 8
 
 #define MIN_TEMP 20
 #define MAX_TEMP 220
@@ -22,63 +22,69 @@ using namespace ace_button;
 #define DEFAULT_TARGET_TEMP 160
 #define EEPROM_SETTINGS_ADDR 0
 
-uint16_t lastRefresh = 0, refreshRate = 500;
+#define CLK_PIN 8
+#define DT_PIN 10
+#define SW_PIN 7
 
-struct HeaterSettings {
-    float targetTemp;
-};
+#define DIRECTION_CW 0   // clockwise direction
+#define DIRECTION_CCW 1  // counter-clockwise direction
+#define DEBOUNCE 10
+volatile int counter = DEFAULT_TARGET_TEMP;
+volatile int direction = DIRECTION_CW;
+volatile unsigned long last_time;  // for debouncing
+int prev_counter;
 
-HeaterSettings currentSettings{
-        .targetTemp = DEFAULT_TARGET_TEMP,
-};
+#define REFRESH_RATE 500
+#define BAUD 115200
 
-AceButton btn_Up(PIN_BTN_UP);
-AceButton btn_Down(PIN_BTN_DOWN);
-AceButton btn_Ok(PIN_BTN_OK);
+HeaterSettings settings(EEPROM_SETTINGS_ADDR);
 
-bool led, heaterEnable, saveSettings = false;
 
-float lastTemp = 0;
+bool led, heaterEnable = false;
+int saveSettings = 0;
+
+float displayTemp = 0;
 
 bool i2CAddrTest(uint8_t addr);
 
 bool check_refresh();
 
-void storeSettings() {
-    int eeAddress = EEPROM_SETTINGS_ADDR;
-    EEPROM.put(eeAddress, currentSettings);
-    saveSettings = false;
-    Serial.println("Settings saved.");
+void check_save();
+
+bool loadSettings();
+
+void ISR_encoderChange() {
+  if ((millis() - last_time) < DEBOUNCE) 
+    return;
+
+  if (digitalRead(DT_PIN) == HIGH) {
+    // the encoder is rotating in counter-clockwise direction => decrease the counter
+    temp_increase();
+    direction = DIRECTION_CW;
+  } else {
+    // the encoder is rotating in clockwise direction => increase the counter
+    temp_decrease();
+    direction = DIRECTION_CCW;
+  }
+
+  last_time = millis();
 }
 
-HeaterSettings loadSettings() {
-    int eeAddress = EEPROM_SETTINGS_ADDR;
-    HeaterSettings settings{};
-    EEPROM.get(eeAddress, settings);
-
-    if (settings.targetTemp <= 0.0) {
-        settings.targetTemp = DEFAULT_TARGET_TEMP;
-    }
-    return settings;
-}
-
-
+// 1. Configure pins
+// 2. Configure peripherals
 void setup() {
-    delay(1000); // some microcontrollers reboot twice
 
     // Init Arduino features
-    Serial.begin(115200);
-    while (! Serial); // Wait until Serial is ready - Leonardo/Micro
+    Serial.begin(BAUD);
+    while (! Serial); // Wait until Serial is ready
 
-    Serial.println(F("setup(): begin"));
+    Serial.print(F("setup(): serial started @ baud rate ")); Serial.println(BAUD)
 
     if (!i2CAddrTest(0x27)) {
         lcd = LiquidCrystal_I2C(0x3F, 16, 2);
     }
 
     analogReference(EXTERNAL); // Connect AREF to 3.3V and use that, less noisy!
-
-    currentSettings = loadSettings();
 
     // Init LCD
     lcd.init();
@@ -87,9 +93,19 @@ void setup() {
     // Init inputs
     pinMode(PIN_TEMP, INPUT);
     pinMode(PIN_ISENSE, INPUT);
-    pinMode(PIN_BTN_UP, INPUT_PULLUP);
-    pinMode(PIN_BTN_OK, INPUT_PULLUP);
-    pinMode(PIN_BTN_DOWN, INPUT_PULLUP);
+    // pinMode(PIN_BTN_UP, INPUT);
+    pinMode(PIN_BTN_OK, INPUT);
+    // pinMode(PIN_BTN_DOWN, INPUT);
+
+    
+    // configure encoder pins as inputs
+    pinMode(CLK_PIN, INPUT);
+    pinMode(DT_PIN, INPUT);
+
+    // use interrupt for CLK pin is enough
+    // call ISR_encoderChange() when CLK pin changes from LOW to HIGH
+    // attachInterrupt(digitalPinToInterrupt(CLK_PIN), ISR_encoderChange, RISING);
+    enableInterrupt(CLK_PIN, ISR_encoderChange, RISING);
 
     // Init outputs
     pinMode(PIN_HEATER, OUTPUT);
@@ -97,22 +113,22 @@ void setup() {
     // Buttons
     // Configure the ButtonConfig with the event handler, and enable all higher
     // level events.
-    ButtonConfig* buttonConfig = ButtonConfig::getSystemButtonConfig();
-    buttonConfig->setEventHandler(handleEvent);
-    buttonConfig->setFeature(ButtonConfig::kFeatureClick);
-    buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
-    buttonConfig->setFeature(ButtonConfig::kFeatureRepeatPress);
+    // ButtonConfig* buttonConfig = ButtonConfig::getSystemButtonConfig();
+    // buttonConfig->setEventHandler(handleEvent);
+    // buttonConfig->setFeature(ButtonConfig::kFeatureClick);
+    // buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
+    // buttonConfig->setFeature(ButtonConfig::kFeatureRepeatPress);
 
     // Check if the button was pressed while booting
-    if (btn_Up.isPressedRaw()) {
-        Serial.println(F("setup(): btn_Up was pressed while booting"));
-    }
-    if (btn_Down.isPressedRaw()) {
-        Serial.println(F("setup(): btn_Up was pressed while booting"));
-    }
-    if (btn_Ok.isPressedRaw()) {
-        Serial.println(F("setup(): btn_Ok was pressed while booting"));
-    }
+    // if (btn_Up.isPressedRaw()) {
+    //     Serial.println(F("setup(): btn_Up was pressed while booting"));
+    // }
+    // if (btn_Down.isPressedRaw()) {
+    //     Serial.println(F("setup(): btn_Up was pressed while booting"));
+    // }
+    // if (btn_Ok.isPressedRaw()) {
+    //     Serial.println(F("setup(): btn_Ok was pressed while booting"));
+    // }
 
     Serial.println(F("setup(): ready"));
 }
@@ -143,47 +159,78 @@ float readTemp(uint8_t NUMSAMPLES = 5) {
       Calculate temperature value in kelvin*/
     float T =  1 / ((1 / To) + ((log(R / Ro)) / B));
     float Tc = T - 273.15; // Converting kelvin to celsius
-    float Tf = Tc * 9.0 / AREF + 32.0; // Converting celsius to Fahrenheit
+    // float Tf = Tc * 9.0 / AREF + 32.0; // Converting celsius to Fahrenheit
 
     return Tc;
 }
 
 
+bool refresh;
+volatile bool forceRefresh;
+
+typedef enum state_t {
+    S_INITIALISE, // 0
+    S_IDLE,  // 1
+    S_MENU, // 2
+    S_PREHEAT, // 3
+    S_REFLOW, // 4
+    S_COOLDOWN, // 5
+    S_HALT  // 6
+};
 
 void loop() {
-    bool refresh = check_refresh();
+    static state_t state = S_IDLE; // initial state is 1, the "idle" state.
+    switch (state) {
+        case S_INITIALISE:
+            if (loadSettings()) {
+                state = S_IDLE;
+            }
+            break;
+        case S_IDLE:
+            // We don't need to do anything here, waiting for a forced state change.
+            break;
+        default:
+            state = S_IDLE;
+            break;
+    }
 
-    check_buttons();
 
-    float temp = readTemp(5);
-    lastTemp = temp;
+    float temp = readTemp(3);
 
-    check_buttons(); // again, more responsive \__("o")__/
+    if (!forceRefresh) {
+        displayTemp = temp;
+    }
 
-    if (refresh) {
-        update_lcd(temp);
+    if (check_refresh()) {
+        update_lcd(displayTemp);
         toggle_led();
     }
 
-//    Serial.print("millis: "); Serial.println(millis());
+    update_heater_state(temp);
 
-    update_state(temp);
-
-    if (saveSettings) {
-        storeSettings();
-    }
+    check_save();
 }
 
+bool loadSettings() {
+    return true;
+}
+
+
+// check if it's time to refresh the display
 bool check_refresh() {
-    long t = millis() / refreshRate;
-    if (t > lastRefresh) {
-        lastRefresh = t;
-        return true;
+    static unsigned long lastRefresh = 0;
+
+    if (!forceRefresh && ((millis() - lastRefresh) < REFRESH_RATE)) {
+        return false;
     }
-    return false;
+
+    lastRefresh = millis();
+    forceRefresh = false;
+    return true;
 }
 
-void update_state(float temp) {
+// toggle the heater state based on the current temperature
+void update_heater_state(float temp) {
     if (temp < currentSettings.targetTemp && heaterEnable) {
         digitalWrite(PIN_HEATER, 1);
     } else {
@@ -192,62 +239,25 @@ void update_state(float temp) {
 }
 
 void check_buttons() {
-    btn_Up.check();
-    btn_Down.check();
-    btn_Ok.check();
+    // btn_Ok.check();
 }
 
-// The event handler for both buttons.
-void handleEvent(AceButton* button, uint8_t eventType, uint8_t buttonState) {
-
-
-    // Print out a message for all events, for both buttons.
-    Serial.print(F("handleEvent(): pin: "));
-    Serial.print(button->getPin());
-    Serial.print(F("; eventType: "));
-    Serial.print(AceButton::eventName(eventType));
-    Serial.print(F("; buttonState: "));
-    Serial.println(buttonState);
-
-    // Control the LED only for the Pressed and Released events of Button 1.
-    // Notice that if the MCU is rebooted while the button is pressed down, no
-    // event is triggered and the LED remains off.
-    switch (eventType) {
-        case AceButton::kEventPressed:
-            if (button->getPin() == PIN_BTN_OK) {
-                bool okPressed = true;
-            }
-            break;
-        case AceButton::kEventReleased:
-            if (button->getPin() == PIN_BTN_OK) {
-                toggle_heater();
-            }
-            break;
-        case AceButton::kEventClicked:
-        case AceButton::kEventRepeatPressed:
-            if (button->getPin() == PIN_BTN_UP) {
-                temp_increase();
-            } else if (button->getPin() == PIN_BTN_DOWN) {
-                temp_decrease();
-            }
-            update_lcd(lastTemp);
-            break;
-    }
-}
 
 
 void temp_increase() {
     if (currentSettings.targetTemp < MAX_TEMP) {
         currentSettings.targetTemp++;
     }
-    saveSettings = true;
+    forceRefresh = true;
+    saveSettings = 1;
 }
 
 void temp_decrease() {
     if (currentSettings.targetTemp > MIN_TEMP) {
         currentSettings.targetTemp--;
     }
-    saveSettings = true;
+    forceRefresh = true;
+    saveSettings = 1;
 }
 
 // toggle heater state and return the new state
@@ -274,11 +284,16 @@ void toggle_led() {
 void update_lcd(float temp) {
     lcd.setCursor(0, 0);  // set the cursor to column 0, line 0
     lcd.print("T: ");
+    if (temp < 100) { lcd.print(" "); }
     lcd.print(temp);
     lcd.print("/");
-    lcd.print(round(currentSettings.targetTemp));
+    lcd.print(currentSettings.targetTemp);
+    lcd.print("   ");
 
     lcd.setCursor(0, 1);
     lcd.print("Heater: ");
     lcd.print(((heaterEnable) ? "ARMED" : "Safe "));
+
+    Serial.print("Temp: "); Serial.println(temp); 
+    Serial.print("Target: "); Serial.println(currentSettings.targetTemp);
 }

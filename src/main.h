@@ -17,7 +17,7 @@ void handleEvent(AceButton* button, uint8_t eventType, uint8_t buttonState);
 
 void check_buttons();
 
-void update_state(float temp);
+void update_heater_state(float temp);
 
 void update_lcd(float temp);
 

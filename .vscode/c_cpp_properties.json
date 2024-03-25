@@ -1,0 +1,66 @@
+//
+// !!! WARNING !!! AUTO-GENERATED FILE!
+// PLEASE DO NOT MODIFY IT AND USE "platformio.ini":
+// https://docs.platformio.org/page/projectconf/section_env_build.html#build-flags
+//
+{
+    "configurations": [
+        {
+            "name": "PlatformIO",
+            "includePath": [
+                "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/include",
+                "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/src",
+                "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/EEPROM/src",
+                "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/ezButton/src",
+                "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/AceButton/src",
+                "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/EnableInterrupt",
+                "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/EnableInterrupt/utility",
+                "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/LiquidCrystal_I2C",
+                "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/Wire/src",
+                "C:/Users/DJ/.platformio/packages/framework-arduino-avr/cores/arduino",
+                "C:/Users/DJ/.platformio/packages/framework-arduino-avr/variants/eightanaloginputs",
+                "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/HID/src",
+                "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/SPI/src",
+                "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/SoftwareSerial/src",
+                ""
+            ],
+            "browse": {
+                "limitSymbolsToIncludedHeaders": true,
+                "path": [
+                    "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/include",
+                    "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/src",
+                    "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/EEPROM/src",
+                    "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/ezButton/src",
+                    "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/AceButton/src",
+                    "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/EnableInterrupt",
+                    "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/EnableInterrupt/utility",
+                    "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nanoatmega328/LiquidCrystal_I2C",
+                    "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/Wire/src",
+                    "C:/Users/DJ/.platformio/packages/framework-arduino-avr/cores/arduino",
+                    "C:/Users/DJ/.platformio/packages/framework-arduino-avr/variants/eightanaloginputs",
+                    "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/HID/src",
+                    "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/SPI/src",
+                    "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/SoftwareSerial/src",
+                    ""
+                ]
+            },
+            "defines": [
+                "PLATFORMIO=60114",
+                "ARDUINO_AVR_NANO",
+                "F_CPU=16000000L",
+                "ARDUINO_ARCH_AVR",
+                "ARDUINO=10808",
+                "__AVR_ATmega328P__",
+                ""
+            ],
+            "cStandard": "gnu11",
+            "cppStandard": "gnu++11",
+            "compilerPath": "C:/Users/DJ/.platformio/packages/toolchain-atmelavr/bin/avr-gcc.exe",
+            "compilerArgs": [
+                "-mmcu=atmega328p",
+                ""
+            ]
+        }
+    ],
+    "version": 4
+}
