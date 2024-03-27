@@ -212,6 +212,7 @@ void loop() {
 }
 
 bool loadSettings() {
+    settings.load()
     return true;
 }
 

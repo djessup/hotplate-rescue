@@ -5,20 +5,44 @@
 #ifndef HOTPLATE_RESCUE_SETTINGS_H
 #define HOTPLATE_RESCUE_SETTINGS_H
 
-//struct HeaterSettings {
-//    float targetTemp;
-//};
+/**
+ * Absolute upper limit of the "max temp" setting
+ */
+#define SETTINGS_MAX_MAX_TEMP 250
 
-#define SETTINGS_DEFAULT_EEPROM_ADDR 0 // degrees
-#define SETTINGS_DEFAULT_MIN_TEMP 20 // degrees
-#define SETTINGS_DEFAULT_MAX_TEMP 220 // degrees
-#define SETTINGS_DEFAULT_MAX_TIMEOUT 60 // minutes
+/**
+ * Absolute upper limit of the "heater timeout" setting (in seconds)
+ */
+#define SETTINGS_MAX_HEATER_TIMEOUT (1 * 60)
+
+/**
+ * Default EEPROM offset to save settings at
+ */
+#define SETTINGS_DEFAULT_EEPROM_ADDR 0
 
 /**
  * Heater settings (this is what actually gets saved to EEPROM)
  */
 struct settings_t {
-    unsigned int version = 1; // todo: reserved for future use
+    /**
+     * Settings struct version (reserved for future use)
+     */
+    unsigned int version = 1;
+
+    /**
+     * Minimum temp the hotplate supports
+     */
+    unsigned int minTemp = 0;
+
+    /**
+     * Maxiumum temp the hotplate supports
+     */
+    unsigned int maxTemp = 200;
+
+    /**
+     * Number of seconds the hotplate can be left ON continuously before it will turn off automatically (safety feature)
+     */
+    unsigned int heaterTimeout = 30 * 60;
     /**
      * Preheat phase target temp (degrees C/F)
      */
@@ -44,7 +68,7 @@ struct settings_t {
 class HeaterSettings {
 public:
     HeaterSettings();
-    HeaterSettings(int eepromAddr, unsigned int minTemp, unsigned int maxTemp, unsigned int timeout);
+    explicit HeaterSettings(int eepromAddr);
 
     unsigned int getPreheatTarget();
     void setPreheatTarget(unsigned int preheatTarget);
@@ -67,6 +91,11 @@ public:
     unsigned int getHeaterTimeout();
     void setHeaterTimeout(unsigned int heaterTimeout);
 
+    /**
+     * Loads settings from EEPROM, aligning values with configured limits if they fall outside
+     */
+    settings_t load();
+
     bool save();
 
 private:
@@ -81,21 +110,6 @@ private:
     bool isDirty;
 
     /**
-     * Minimum temp the hotplate supports
-     */
-    unsigned int minTemp;
-
-    /**
-     * Maxiumum temp the hotplate supports
-     */
-    unsigned int maxTemp;
-
-    /**
-     * Number of seconds the hotplate can be left ON continuously before it will turn off automatically (safety feature)
-     */
-    unsigned int heaterTimeout;
-
-    /**
      * Active settings object
      */
     settings_t settings;
@@ -106,14 +120,10 @@ private:
     bool save(settings_t s);
 
     /**
-     * Loads settings from EEPROM, aligning values with configured limits if they fall outside
+     * Check if a settings object is valid per the min/max limits set and fix it if not
+     * @returns the settings object, with any out-of-bounds values changed to be within bounds.
      */
-    settings_t load();
-
-    /**
-     * Check if a settings object is valid per the min/max limits set
-     */
-    bool isValid(settings_t s);
+    static settings_t alignToLimits(settings_t s);
 };
 
 
