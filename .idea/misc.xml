@@ -3,6 +3,16 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.11 virtualenv at C:\Users\David Jessup\.platformio\penv" />
   </component>
+  <component name="CidrRootsConfiguration">
+    <sourceRoots>
+      <file path="$PROJECT_DIR$" />
+      <file path="$PROJECT_DIR$/src" />
+    </sourceRoots>
+    <libraryRoots>
+      <file path="$PROJECT_DIR$/.pio/libdeps/nanoatmega328" />
+      <file path="$PROJECT_DIR$/.pio/libdeps/nanoatmega328/Encoder" />
+    </libraryRoots>
+  </component>
   <component name="ExternalStorageConfigurationManager" enabled="true" />
   <component name="PlatformIOSettings">
     <option name="linkedExternalProjectsSettings">

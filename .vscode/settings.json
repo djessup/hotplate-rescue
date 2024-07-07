@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        ".env*": "dotenv",
+        "vector": "cpp",
+        "interrupt.h": "c",
+        "inttypes.h": "c",
+        "stdio.h": "c",
+        "pgmspace.h": "c",
+        "wiring_private.h": "c",
+        "arduino.h": "c"
+    }
+}

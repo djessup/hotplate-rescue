@@ -1,300 +1,401 @@
-//
-// Created by DJ on 1/12/2023.
+
+#ifndef HOTPLATE_RESCUE_MAIN_H
+#define HOTPLATE_RESCUE_MAIN_H
 
 #include "main.h"
-//#include "adc.h"
-#include <EEPROM.h>
-#include "EnableInterrupt.h"
-#include "settings.h"
+//
+// Created by DJ on 27/06/2024.
+//
+#if DEBUG
+    #include "avr8-stub.h"
+    #include "app_api.h"
+#endif
+
+#include "Arduino.h"
+#include <rotary.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <RunningAverage.h>
 
 
-#define PIN_TEMP PIN_A0
-#define PIN_ISENSE PIN_A1
-#define PIN_HEATER 3
-// #define PIN_BTN_UP 10
-#define PIN_BTN_OK 7
-// #define PIN_BTN_DOWN 8
 
-#define MIN_TEMP 20
-#define MAX_TEMP 220
-#define SAMPLE_DELAY 2
+LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
+// Global variables
+unsigned int setTemp = 150;
+int currentTemp = 0;
+bool heatingEnabled = false;
+volatile unsigned long lastTime = 0;
+double errSum = 0, lastErr = 0;
 
-#define DEFAULT_TARGET_TEMP 160
-#define EEPROM_SETTINGS_ADDR 0
+volatile unsigned int encoderValue;
 
-#define CLK_PIN 8
-#define DT_PIN 10
-#define SW_PIN 7
+Rotary encoder(ENCODER_PIN_CLK, ENCODER_PIN_DT);
+RunningAverage temp(TEMP_SAMPLES);
+State currentState = IDLE;
 
-#define DIRECTION_CW 0   // clockwise direction
-#define DIRECTION_CCW 1  // counter-clockwise direction
-#define DEBOUNCE 10
-volatile int counter = DEFAULT_TARGET_TEMP;
-volatile int direction = DIRECTION_CW;
-volatile unsigned long last_time;  // for debouncing
-int prev_counter;
+/*
+ * Pin Change Interrupts
+ * D0	  PCINT16 (PCMSK2 / PCIF2 / PCIE2)
+ * D1	  PCINT17 (PCMSK2 / PCIF2 / PCIE2)
+ * D2	  PCINT18 (PCMSK2 / PCIF2 / PCIE2)
+ * D3	  PCINT19 (PCMSK2 / PCIF2 / PCIE2)
+ * D4	  PCINT20 (PCMSK2 / PCIF2 / PCIE2)
+ * D5	  PCINT21 (PCMSK2 / PCIF2 / PCIE2)
+ * D6	  PCINT22 (PCMSK2 / PCIF2 / PCIE2)
+ * D7	  PCINT23 (PCMSK2 / PCIF2 / PCIE2)
+ * D8	  PCINT0  (PCMSK0 / PCIF0 / PCIE0)
+ * D9	  PCINT1  (PCMSK0 / PCIF0 / PCIE0)
+ * D10	  PCINT2  (PCMSK0 / PCIF0 / PCIE0)
+ * D11	  PCINT3  (PCMSK0 / PCIF0 / PCIE0)
+ * D12	  PCINT4  (PCMSK0 / PCIF0 / PCIE0)
+ * D13	  PCINT5  (PCMSK0 / PCIF0 / PCIE0)
+ * A0	  PCINT8  (PCMSK1 / PCIF1 / PCIE1)
+ * A1	  PCINT9  (PCMSK1 / PCIF1 / PCIE1)
+ * A2	  PCINT10 (PCMSK1 / PCIF1 / PCIE1)
+ * A3	  PCINT11 (PCMSK1 / PCIF1 / PCIE1)
+ * A4	  PCINT12 (PCMSK1 / PCIF1 / PCIE1)
+ * A5	  PCINT13 (PCMSK1 / PCIF1 / PCIE1)
+ *
+ * To handle a pin change interrupt you need to:
+ *  - Specify which pin in the group. This is the PCMSKn variable (where n is 0, 1 or 2 from the table below).
+ *     You can have interrupts on more than one pin.
+ *  - Enable the appropriate group of interrupts (0, 1 or 2)
+ *  - Supply an interrupt handler as shown above
+ */
+//
+//ISR (PCINT0_vect)
+//{
+//    // handle pin change interrupt for D8 to D13 here
+//}  // end of PCINT0_vect
+//
+//ISR (PCINT1_vect)
+//{
+//    // handle pin change interrupt for A0 to A5 here
+//}  // end of PCINT1_vect
+//
+//ISR (PCINT2_vect)
+//{
+//    // handle pin change interrupt for D0 to D7 here
+//}  // end of PCINT2_vect
+//
+////
+////void setup ()
+////{
+////    // pin change interrupt (example for D9)
+////    PCMSK0 |= bit (PCINT1);  // want pin 9
+////    PCIFR  |= bit (PCIF0);   // clear any outstanding interrupts
+////    PCICR  |= bit (PCIE0);   // enable pin change interrupts for D8 to D13
+////}
+//
+//void ISR_encoderClk() {
+//    static unsigned long last_exec = 0;  // for debouncing
+//
+//    if ((millis() - last_exec) < 10) {
+//        return;
+//    }
+//
+//    encoderValue = (digitalRead(ENCODER_PIN_DT) == HIGH) ?  encoderValue + 1 : encoderValue - 1;
+//
+//    last_exec = millis();
+//    lastTime = last_exec;
+//}
 
-#define REFRESH_RATE 500
-#define BAUD 115200
 
-HeaterSettings settings(EEPROM_SETTINGS_ADDR);
+State advanceState(State _state) {
+    switch (_state) {
+        case IDLE:
+            return PREHEAT;
 
+        case PREHEAT:
+            return REFLOW;
 
-bool led, heaterEnable = false;
-int saveSettings = 0;
+        case REFLOW:
+            return COOLDOWN;
 
-float displayTemp = 0;
-
-bool i2CAddrTest(uint8_t addr);
-
-bool check_refresh();
-
-void check_save();
-
-bool loadSettings();
-
-void ISR_encoderChange() {
-  if ((millis() - last_time) < DEBOUNCE) 
-    return;
-
-  if (digitalRead(DT_PIN) == HIGH) {
-    // the encoder is rotating in counter-clockwise direction => decrease the counter
-    temp_increase();
-    direction = DIRECTION_CW;
-  } else {
-    // the encoder is rotating in clockwise direction => increase the counter
-    temp_decrease();
-    direction = DIRECTION_CCW;
-  }
-
-  last_time = millis();
+        case COOLDOWN:
+            return IDLE;
+    
+        default:
+            return IDLE;
+            break;
+    }
 }
 
-// 1. Configure pins
-// 2. Configure peripherals
-void setup() {
+ISR(PCINT2_vect) 
+{  // handle pin change interrupt for D0 to D7
 
-    // Init Arduino features
-    Serial.begin(BAUD);
-    while (! Serial); // Wait until Serial is ready
-
-    Serial.print(F("setup(): serial started @ baud rate ")); Serial.println(BAUD)
-
-    if (!i2CAddrTest(0x27)) {
-        lcd = LiquidCrystal_I2C(0x3F, 16, 2);
+    // Holds the pin states from the last interrupt
+    static uint8_t prevPINDState = 0b00000000;
+    
+    static unsigned long last_exec = 0;  // for debouncing
+    if ((millis() - last_exec) < 1) {
+        return;
     }
+    last_exec = millis();
+    
+    uint8_t changedBits = PIND ^ prevPINDState; // XOR to find changed bits
+    prevPINDState = PIND; // Update for next time
+    
+    // D3 and/or D4 (PCINT19 and PCINT20) have changed
+    if (changedBits & (bit(PCINT19) | bit(PCINT20))) {   
+        checkEncoder();
+    }
+}
 
-    analogReference(EXTERNAL); // Connect AREF to 3.3V and use that, less noisy!
 
-    // Init LCD
-    lcd.init();
+void checkEncoder() {
+    unsigned char state = encoder.process();
+    if (state == DIR_CW && encoderValue < TEMP_MAX) {
+        encoderValue++;
+    } else if (state == DIR_CCW && encoderValue > TEMP_MIN) {
+        encoderValue--;
+    }
+}
+// end of PCINT2_vect
+
+
+void enablePinChangeInterrupt(uint8_t pin) {
+    // uint8_t port = digitalPinToPort(pin);
+    volatile uint8_t *pcmsk = digitalPinToPCMSK(pin);
+    uint8_t PCICRbit = digitalPinToPCICRbit(pin);
+    uint8_t PCMSKbit = digitalPinToPCMSKbit(pin);
+
+    // Enable the pin change interrupt for the specific pin
+    *pcmsk |= bit(PCMSKbit);
+
+    // Clear any outstanding interrupts
+    PCIFR |= bit(PCICRbit);
+
+    // Enable pin change interrupts for the port
+    PCICR |= bit(PCICRbit);
+}
+
+void initDisplay() {
+    lcd.begin(16, 2);
     lcd.backlight();
 
-    // Init inputs
-    pinMode(PIN_TEMP, INPUT);
-    pinMode(PIN_ISENSE, INPUT);
-    // pinMode(PIN_BTN_UP, INPUT);
-    pinMode(PIN_BTN_OK, INPUT);
-    // pinMode(PIN_BTN_DOWN, INPUT);
-
-    
-    // configure encoder pins as inputs
-    pinMode(CLK_PIN, INPUT);
-    pinMode(DT_PIN, INPUT);
-
-    // use interrupt for CLK pin is enough
-    // call ISR_encoderChange() when CLK pin changes from LOW to HIGH
-    // attachInterrupt(digitalPinToInterrupt(CLK_PIN), ISR_encoderChange, RISING);
-    enableInterrupt(CLK_PIN, ISR_encoderChange, RISING);
-
-    // Init outputs
-    pinMode(PIN_HEATER, OUTPUT);
-
-    // Buttons
-    // Configure the ButtonConfig with the event handler, and enable all higher
-    // level events.
-    // ButtonConfig* buttonConfig = ButtonConfig::getSystemButtonConfig();
-    // buttonConfig->setEventHandler(handleEvent);
-    // buttonConfig->setFeature(ButtonConfig::kFeatureClick);
-    // buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
-    // buttonConfig->setFeature(ButtonConfig::kFeatureRepeatPress);
-
-    // Check if the button was pressed while booting
-    // if (btn_Up.isPressedRaw()) {
-    //     Serial.println(F("setup(): btn_Up was pressed while booting"));
-    // }
-    // if (btn_Down.isPressedRaw()) {
-    //     Serial.println(F("setup(): btn_Up was pressed while booting"));
-    // }
-    // if (btn_Ok.isPressedRaw()) {
-    //     Serial.println(F("setup(): btn_Ok was pressed while booting"));
-    // }
-
-    Serial.println(F("setup(): ready"));
+    lcd.setCursor(0, 0);
+    lcd.print("Set:");
+    lcd.setCursor(0, 1);
+    lcd.print("Cur:");
 }
 
+bool checkButton() {
 
-float readTemp(uint8_t NUMSAMPLES = 5) {
+    static unsigned long buttonPressStart = 0;
+    unsigned long now = millis();
 
-    float average = 0;
-    // take N samples in a row, with a slight delay
-    for (int i = 0; NUMSAMPLES > i; i++) {
-        average += analogRead(PIN_TEMP);
-        delay(SAMPLE_DELAY);
-    }
-
-    // average samples
-    average /= NUMSAMPLES;
-
-    float AREF = 3.3;
-    int Ro = 100, B =  3950; //Nominal resistance 50K, Beta constant
-    float Rseries = 4.7;// Series resistor 10K
-    float To = 298.15; // Nominal Temperature
-
-    float Vi = average * (AREF / 1023.0);
-    //Convert voltage measured to resistance value
-    //All Resistance are in kilo ohms.
-    float R = (Vi * Rseries) / (AREF - Vi);
-    /*Use R value in steinhart and hart equation
-      Calculate temperature value in kelvin*/
-    float T =  1 / ((1 / To) + ((log(R / Ro)) / B));
-    float Tc = T - 273.15; // Converting kelvin to celsius
-    // float Tf = Tc * 9.0 / AREF + 32.0; // Converting celsius to Fahrenheit
-
-    return Tc;
-}
-
-
-bool refresh;
-volatile bool forceRefresh;
-
-typedef enum state_t {
-    S_INITIALISE, // 0
-    S_IDLE,  // 1
-    S_MENU, // 2
-    S_PREHEAT, // 3
-    S_REFLOW, // 4
-    S_COOLDOWN, // 5
-    S_HALT  // 6
-};
-
-void loop() {
-    static state_t state = S_IDLE; // initial state is 1, the "idle" state.
-    switch (state) {
-        case S_INITIALISE:
-            if (loadSettings()) {
-                state = S_IDLE;
-            }
-            break;
-        case S_IDLE:
-            // We don't need to do anything here, waiting for a forced state change.
-            break;
-        default:
-            state = S_IDLE;
-            break;
-    }
-
-
-    float temp = readTemp(3);
-
-    if (!forceRefresh) {
-        displayTemp = temp;
-    }
-
-    if (check_refresh()) {
-        update_lcd(displayTemp);
-        toggle_led();
-    }
-
-    update_heater_state(temp);
-
-    check_save();
-}
-
-bool loadSettings() {
-    settings.load()
-    return true;
-}
-
-
-// check if it's time to refresh the display
-bool check_refresh() {
-    static unsigned long lastRefresh = 0;
-
-    if (!forceRefresh && ((millis() - lastRefresh) < REFRESH_RATE)) {
-        return false;
-    }
-
-    lastRefresh = millis();
-    forceRefresh = false;
-    return true;
-}
-
-// toggle the heater state based on the current temperature
-void update_heater_state(float temp) {
-    if (temp < currentSettings.targetTemp && heaterEnable) {
-        digitalWrite(PIN_HEATER, 1);
+    if (digitalRead(BUTTON_PIN)) {
+        
+        if (buttonPressStart <= 0) {
+            buttonPressStart = now;
+        } 
+        if (now - buttonPressStart >= BUTTON_MIN_PRESS_MILLIS) {
+            buttonPressStart = 0;
+            return true;
+        }
     } else {
-        digitalWrite(PIN_HEATER, 0);
+        buttonPressStart = 0;
     }
-}
 
-void check_buttons() {
-    // btn_Ok.check();
-}
-
-
-
-void temp_increase() {
-    if (currentSettings.targetTemp < MAX_TEMP) {
-        currentSettings.targetTemp++;
-    }
-    forceRefresh = true;
-    saveSettings = 1;
-}
-
-void temp_decrease() {
-    if (currentSettings.targetTemp > MIN_TEMP) {
-        currentSettings.targetTemp--;
-    }
-    forceRefresh = true;
-    saveSettings = 1;
-}
-
-// toggle heater state and return the new state
-bool toggle_heater() {
-    heaterEnable = !heaterEnable;
-    return heaterEnable;
-}
-
-bool i2CAddrTest(uint8_t addr) {
-    Wire.begin();
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-        return true;
-    }
     return false;
 }
 
-void toggle_led() {
-    led = !led;
-    digitalWrite(LED_BUILTIN, led);
+void setup() {
+    #if DEBUG
+    debug_init();
+    #else
+    Serial.begin(115200);  // Initialize serial communication
+    #endif
+    pinMode(HEATER_PIN, OUTPUT);
+    digitalWrite(HEATER_PIN, LOW);
+    pinMode(BUTTON_PIN, INPUT);
+    pinMode(THERMISTOR_PIN, INPUT);
+    // handled by Rotary.cpp already
+    pinMode(ENCODER_PIN_CLK, INPUT);
+    pinMode(ENCODER_PIN_DT, INPUT);
+
+    Wire.begin();  // Initialize I2C communication
+    delay(500);  // Wait for things to settle
+
+    // Start with heater off
+    lastTime = millis();
+    encoderValue = 150;
+
+    enablePinChangeInterrupt(ENCODER_PIN_CLK);
+    enablePinChangeInterrupt(ENCODER_PIN_DT);
+
+    initDisplay();
+
+    temp.fillValue(readTemperature(), TEMP_SAMPLES);
+}
+
+void loop() {
+    // Read encoder
+   encoderValue = constrain(encoderValue, 0, 300);
+   if (encoderValue != setTemp) {
+       setTemp = encoderValue;
+   }
+//    Serial.println("enc, setpoint, temp, enabled");
+//    Serial.print(setTemp); Serial.print(",");
+//    Serial.print(currentTemp); Serial.print(",");
+//    Serial.println(heatingEnabled);
+
+    if (checkButton()) {
+        currentState = advanceState(currentState);
+    }
+
+    switch (currentState) {
+        case PREHEAT:
+            analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage())*.75);
+            break;
+
+        case REFLOW:
+            analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage())*.75);
+            break;
+
+        default:
+            digitalWrite(HEATER_PIN, LOW);
+            break;
+    }
+
+    // Read temperature
+    temp.addValue(readTemperature());
+
+    // Update heater
+//    if (heatingEnabled) {
+//        int output = computePID(setTemp, currentTemp);
+//        analogWrite(HEATER_PIN, output);
+//    } else {
+//        analogWrite(HEATER_PIN, 0);
+//    }
+
+   updateDisplay();
+
+    // Output temperature and setpoint via serial
+//    Serial.print("Setpoint: ");
+//    Serial.print(setTemp);
+//    Serial.print(" Current Temp: ");
+//    Serial.println(currentTemp);
+
+    delay(10);
 }
 
 
-void update_lcd(float temp) {
-    lcd.setCursor(0, 0);  // set the cursor to column 0, line 0
-    lcd.print("T: ");
-    if (temp < 100) { lcd.print(" "); }
-    lcd.print(temp);
-    lcd.print("/");
-    lcd.print(currentSettings.targetTemp);
-    lcd.print("   ");
+float readTemperature() {
+    int adcValue = analogRead(THERMISTOR_PIN); // Read the analog value
+    float resistance = SERIES_RESISTOR / (1023.0 / adcValue - 1); // Calculate resistance
 
-    lcd.setCursor(0, 1);
-    lcd.print("Heater: ");
-    lcd.print(((heaterEnable) ? "ARMED" : "Safe "));
+    // Calculate temperature using the Steinhart-Hart equation
+    float steinhart;
+    steinhart = resistance / THERMISTOR_NOMINAL; // (R/Ro)
+    steinhart = log(steinhart); // ln(R/Ro)
+    steinhart /= B_COEFFICIENT; // 1/B * ln(R/Ro)
+    steinhart += 1.0 / (TEMPERATURE_NOMINAL + 273.15); // + (1/To)
+    steinhart = 1.0 / steinhart; // Invert
+    steinhart -= 273.15; // Convert to Celsius
 
-    Serial.print("Temp: "); Serial.println(temp); 
-    Serial.print("Target: "); Serial.println(currentSettings.targetTemp);
+    return steinhart;
 }
+
+
+
+unsigned int calculatePID(float setpoint, float input) {
+    static float integralTerm = 0.0f;
+    static float lastInput = 0.0f;
+    static float derivativeFilter = 0.0f; // For filtering the derivative term
+    static const float alpha = 0.1; // Smoothing factor for derivative filtering
+    static unsigned long lastTime = 0;
+
+    // Update the current time
+    unsigned long currentTime = millis();
+    unsigned long timeChange = (currentTime - lastTime);
+
+    // Compute the error
+    float error = setpoint - input;
+
+    // Proportional term
+    float Pout = Kp * error;
+
+    // Integral term
+    integralTerm += (Ki * error * (timeChange / 1000.0f));
+
+    // Anti-windup: prevent integral term from getting too large
+    // if (integralTerm > 255.0f) integralTerm = 255.0f;
+    // else if (integralTerm < 0.0f) integralTerm = 0.0f;
+    // Integral clamping (-100 - 100)
+    if (integralTerm > 150.0f) integralTerm = 150.0f;
+    else if (integralTerm < -150.0f) integralTerm = -150.0f;
+
+    // Derivative term
+    float derivative = (input - lastInput) / (timeChange / 1000.0f);
+    // float Dout = Kd * derivative;
+    // Derivative filter
+    derivativeFilter = (alpha * derivative) + ((1 - alpha) * derivativeFilter);
+    float Dout = Kd * derivativeFilter;
+
+    // Compute the total output
+    float output = Pout + integralTerm - Dout;
+
+    // Restrict the output to the range 0-255
+    if (output > 255.0f) output = 255.0f;
+    else if (output < 0.0f) output = 0.0f;
+
+    // Remember the last input and time for the next calculation
+    lastInput = input;
+    lastTime = currentTime;
+
+    return (unsigned int)round(output);
+}
+
+// int countDigits(float number) {
+//     char buffer[8]; // Enough to hold the float as a string with reasonable precision
+//     dtostrf(number, 6, 2, buffer); // Width 6, precision 2
+//     return strlen(buffer);
+// }
+
+// int countDigits(int number) {
+//     char buffer[8]; // Enough to hold all digits of a 32-bit int including sign
+//     itoa(number, buffer, 10);
+//     return strlen(buffer);
+// }
+
+void updateDisplay() {
+    char setBuff[6] = {' '};
+    itoa(setTemp, setBuff, 10); // convert to base-10 string
+    int setDigits = strlen(setBuff);
+    setBuff[setDigits] = 'C';
+    // for (int i = setDigits+1; i < 8; i = i+1) {
+    //     setBuff[i] = ' ';
+    // }
+    lcd.setCursor(5, 0);
+    lcd.print(setBuff);
+    char tempBuff[8] = {};
+    dtostrf(temp.getFastAverage(), 5, 1, tempBuff); // convert to xxx.yy string
+    
+    lcd.setCursor(5, 1);
+    lcd.print(tempBuff);
+    lcd.print("C");
+
+    lcd.setCursor(12, 0);
+    char stateStr[5] = {};
+    switch (currentState) {
+        case IDLE:
+            strcpy(stateStr, "IDLE");
+            break;
+        case PREHEAT:
+            strcpy(stateStr, " PRE");
+            break;
+        case REFLOW:
+            strcpy(stateStr, "FLOW");
+            break;
+        case COOLDOWN:
+            strcpy(stateStr, "COOL");
+            break;
+        default:
+            strcpy(stateStr, "ERR");
+            break;
+    }
+    lcd.print(stateStr);
+}
+#endif //HOTPLATE_RESCUE_MAIN_H
