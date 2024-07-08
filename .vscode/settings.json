@@ -7,6 +7,7 @@
         "stdio.h": "c",
         "pgmspace.h": "c",
         "wiring_private.h": "c",
-        "arduino.h": "c"
+        "arduino.h": "c",
+        "algorithm": "cpp"
     }
 }

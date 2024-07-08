@@ -12,6 +12,7 @@
                 "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/src",
                 "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/lib/rotary",
                 "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nano/avr-debugger/avr8-stub",
+                "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nano/TaskScheduler/src",
                 "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nano/RunningAverage",
                 "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nano/LiquidCrystal_I2C",
                 "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/HID/src",
@@ -30,6 +31,7 @@
                     "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/src",
                     "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/lib/rotary",
                     "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nano/avr-debugger/avr8-stub",
+                    "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nano/TaskScheduler/src",
                     "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nano/RunningAverage",
                     "C:/Users/DJ/Documents/PlatformIO/Projects/hotplate-rescue/.pio/libdeps/nano/LiquidCrystal_I2C",
                     "C:/Users/DJ/.platformio/packages/framework-arduino-avr/libraries/HID/src",
@@ -53,7 +55,7 @@
                 ""
             ],
             "cStandard": "gnu11",
-            "cppStandard": "gnu++11",
+            "cppStandard": "gnu++17",
             "compilerPath": "C:/Users/DJ/.platformio/packages/toolchain-atmelavr/bin/avr-gcc.exe",
             "compilerArgs": [
                 "-mmcu=atmega328p",

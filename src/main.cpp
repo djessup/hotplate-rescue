@@ -1,11 +1,13 @@
+//
+// Created by DJ on 27/06/2024.
+//
 
 #ifndef HOTPLATE_RESCUE_MAIN_H
 #define HOTPLATE_RESCUE_MAIN_H
 
 #include "main.h"
-//
-// Created by DJ on 27/06/2024.
-//
+#include "reflow_profile.h"
+
 #if DEBUG
     #include "avr8-stub.h"
     #include "app_api.h"
@@ -16,8 +18,16 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <RunningAverage.h>
+#include <TaskScheduler.h>
 
+// Next:
+// - implement tasks to ramp up to temp for soak/reflow
+// Last:
+// - watchdog check for thermal runaway
 
+// void callback();
+// Scheduler scheduler;
+// Task soakTask((TASK_SECOND * 1), TASK_FOREVER, callback);
 
 LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 // Global variables
@@ -104,9 +114,9 @@ State currentState = IDLE;
 State advanceState(State _state) {
     switch (_state) {
         case IDLE:
-            return PREHEAT;
+            return SOAK;
 
-        case PREHEAT:
+        case SOAK:
             return REFLOW;
 
         case REFLOW:
@@ -170,15 +180,6 @@ void enablePinChangeInterrupt(uint8_t pin) {
     PCICR |= bit(PCICRbit);
 }
 
-void initDisplay() {
-    lcd.begin(16, 2);
-    lcd.backlight();
-
-    lcd.setCursor(0, 0);
-    lcd.print("Set:");
-    lcd.setCursor(0, 1);
-    lcd.print("Cur:");
-}
 
 bool checkButton() {
 
@@ -246,14 +247,16 @@ void loop() {
     }
 
     switch (currentState) {
-        case PREHEAT:
+        case SOAK:
+            
             analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage())*.75);
             break;
 
         case REFLOW:
-            analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage())*.75);
+            analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage()));
             break;
 
+        case COOLDOWN:
         default:
             digitalWrite(HEATER_PIN, LOW);
             break;
@@ -281,6 +284,9 @@ void loop() {
     delay(10);
 }
 
+/**
+ * TEMP
+ */
 
 float readTemperature() {
     int adcValue = analogRead(THERMISTOR_PIN); // Read the analog value
@@ -298,7 +304,9 @@ float readTemperature() {
     return steinhart;
 }
 
-
+/**
+ * PID CONTROLLER
+ */
 
 unsigned int calculatePID(float setpoint, float input) {
     static float integralTerm = 0.0f;
@@ -323,7 +331,7 @@ unsigned int calculatePID(float setpoint, float input) {
     // Anti-windup: prevent integral term from getting too large
     // if (integralTerm > 255.0f) integralTerm = 255.0f;
     // else if (integralTerm < 0.0f) integralTerm = 0.0f;
-    // Integral clamping (-100 - 100)
+    // Integral clamping
     if (integralTerm > 150.0f) integralTerm = 150.0f;
     else if (integralTerm < -150.0f) integralTerm = -150.0f;
 
@@ -348,34 +356,50 @@ unsigned int calculatePID(float setpoint, float input) {
     return (unsigned int)round(output);
 }
 
-// int countDigits(float number) {
-//     char buffer[8]; // Enough to hold the float as a string with reasonable precision
-//     dtostrf(number, 6, 2, buffer); // Width 6, precision 2
-//     return strlen(buffer);
-// }
 
-// int countDigits(int number) {
-//     char buffer[8]; // Enough to hold all digits of a 32-bit int including sign
-//     itoa(number, buffer, 10);
-//     return strlen(buffer);
-// }
+/**
+ * LCD DISPLAY 
+ */
+
+void initDisplay() {
+    lcd.begin(16, 2);
+    lcd.backlight();
+    lcd.setCursor(0, 0);
+    lcd.print("Set:");
+    lcd.setCursor(0, 1);
+    lcd.print("Cur:");
+}
 
 void updateDisplay() {
-    char setBuff[6] = {' '};
-    itoa(setTemp, setBuff, 10); // convert to base-10 string
-    int setDigits = strlen(setBuff);
-    setBuff[setDigits] = 'C';
-    // for (int i = setDigits+1; i < 8; i = i+1) {
-    //     setBuff[i] = ' ';
-    // }
-    lcd.setCursor(5, 0);
-    lcd.print(setBuff);
-    char tempBuff[8] = {};
-    dtostrf(temp.getFastAverage(), 5, 1, tempBuff); // convert to xxx.yy string
-    
-    lcd.setCursor(5, 1);
-    lcd.print(tempBuff);
-    lcd.print("C");
+    static uint8_t lastSetTemp;
+    static float lastTemp;
+    uint8_t setBuffSize = 6, tempBuffSize = 8;
+
+    if (lastSetTemp != setTemp) {
+        char setBuff[setBuffSize] = {};
+        lastSetTemp = setTemp;
+        itoa(setTemp, setBuff, 10); // convert to base-10 string
+        int setDigits = strlen(setBuff);
+        setBuff[setDigits] = 'C';
+        // Fill empty elements with spaces
+        for (unsigned int i = setDigits + 1; i < setBuffSize - 1; ++i) {
+            if (setBuff[i] == '\0') {
+                setBuff[i] = ' ';
+            }
+        }
+        lcd.setCursor(5, 0);
+        lcd.print(setBuff);
+    }
+
+    if (lastTemp != temp.getFastAverage()) {
+        lastTemp = temp.getFastAverage();
+        char tempBuff[tempBuffSize] = { };
+        dtostrf(lastTemp, 5, 1, tempBuff); // convert to xxx.yy string
+        
+        lcd.setCursor(5, 1);
+        lcd.print(tempBuff);
+        lcd.print("C");
+    }
 
     lcd.setCursor(12, 0);
     char stateStr[5] = {};
@@ -383,8 +407,8 @@ void updateDisplay() {
         case IDLE:
             strcpy(stateStr, "IDLE");
             break;
-        case PREHEAT:
-            strcpy(stateStr, " PRE");
+        case SOAK:
+            strcpy(stateStr, "SOAK");
             break;
         case REFLOW:
             strcpy(stateStr, "FLOW");
@@ -393,7 +417,7 @@ void updateDisplay() {
             strcpy(stateStr, "COOL");
             break;
         default:
-            strcpy(stateStr, "ERR");
+            strcpy(stateStr, "UHOH");
             break;
     }
     lcd.print(stateStr);
