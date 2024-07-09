@@ -48,6 +48,7 @@
                 "PLATFORMIO=60115",
                 "ARDUINO_AVR_NANO",
                 "VERSION=1.0.0",
+                "SERIAL_TELEMETRY=1",
                 "F_CPU=16000000L",
                 "ARDUINO_ARCH_AVR",
                 "ARDUINO=10808",
@@ -55,8 +56,8 @@
                 ""
             ],
             "cStandard": "gnu11",
-            "cppStandard": "gnu++17",
-            "compilerPath": "C:/Users/DJ/.platformio/packages/toolchain-atmelavr/bin/avr-gcc.exe",
+            "cppStandard": "gnu++14",
+            "compilerPath": "C:/Users/DJ/.platformio/packages/toolchain-atmelavr@1.70300.191015/bin/avr-gcc.exe",
             "compilerArgs": [
                 "-mmcu=atmega328p",
                 ""

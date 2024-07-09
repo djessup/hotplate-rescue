@@ -20,6 +20,7 @@
 #include <RunningAverage.h>
 #include <TaskScheduler.h>
 
+
 // Next:
 // - implement tasks to ramp up to temp for soak/reflow
 // Last:
@@ -181,33 +182,49 @@ void enablePinChangeInterrupt(uint8_t pin) {
 }
 
 
-bool checkButton() {
-
-    static unsigned long buttonPressStart = 0;
+ButtonResult getButtonState() {
+    // If pressStart > 0 the button was released since the last check
+    static unsigned long buttonPressStart = 0, timeHeld = 0;
     unsigned long now = millis();
 
-    if (digitalRead(BUTTON_PIN)) {
-        
-        if (buttonPressStart <= 0) {
+    ButtonResult result = RELEASED;
+    
+    if (digitalRead(BUTTON_PIN)) { // button held
+        if (buttonPressStart == 0) { // is this the start of the press?
             buttonPressStart = now;
-        } 
-        if (now - buttonPressStart >= BUTTON_MIN_PRESS_MILLIS) {
-            buttonPressStart = 0;
-            return true;
         }
-    } else {
+
+        // Update time held
+        timeHeld = now - buttonPressStart;
+        
+        if (timeHeld >= BUTTON_LONG_PRESS_MILLIS) { // long-press acheivement unlocked!
+            result = LONG_PRESS;
+            buttonPressStart = 0; // start a new press sequence to avoid immediate re-triggering
+        } else if (timeHeld >= BUTTON_SHORT_PRESS_MILLIS) {
+            result = HELD;
+        }
+
+    } else { // button released
+        result = (timeHeld >= BUTTON_SHORT_PRESS_MILLIS) ? SHORT_PRESS : RELEASED;
+        timeHeld = 0;
         buttonPressStart = 0;
     }
 
-    return false;
+    // Telemetry
+    _PM(Metric("button.pressStart", buttonPressStart));
+    _PM(Metric("button.timeHeld", timeHeld));
+    _PM(Metric("button.result", result));
+
+    return result;
 }
 
 void setup() {
     #if DEBUG
     debug_init();
-    #else
+    #elif SERIAL_TELEMETRY
     Serial.begin(115200);  // Initialize serial communication
     #endif
+
     pinMode(HEATER_PIN, OUTPUT);
     digitalWrite(HEATER_PIN, LOW);
     pinMode(BUTTON_PIN, INPUT);
@@ -232,17 +249,13 @@ void setup() {
 }
 
 void loop() {
-    // Read encoder
+    // 
    encoderValue = constrain(encoderValue, 0, 300);
    if (encoderValue != setTemp) {
        setTemp = encoderValue;
    }
-//    Serial.println("enc, setpoint, temp, enabled");
-//    Serial.print(setTemp); Serial.print(",");
-//    Serial.print(currentTemp); Serial.print(",");
-//    Serial.println(heatingEnabled);
 
-    if (checkButton()) {
+    if (getButtonState() == LONG_PRESS) {
         currentState = advanceState(currentState);
     }
 
@@ -265,21 +278,11 @@ void loop() {
     // Read temperature
     temp.addValue(readTemperature());
 
-    // Update heater
-//    if (heatingEnabled) {
-//        int output = computePID(setTemp, currentTemp);
-//        analogWrite(HEATER_PIN, output);
-//    } else {
-//        analogWrite(HEATER_PIN, 0);
-//    }
+    updateDisplay();
 
-   updateDisplay();
-
-    // Output temperature and setpoint via serial
-//    Serial.print("Setpoint: ");
-//    Serial.print(setTemp);
-//    Serial.print(" Current Temp: ");
-//    Serial.println(currentTemp);
+    // Telemetry
+    _PM(Metric("target", setTemp));
+    _PM(Metric("temp", temp.getFastAverage()));
 
     delay(10);
 }
@@ -312,7 +315,7 @@ unsigned int calculatePID(float setpoint, float input) {
     static float integralTerm = 0.0f;
     static float lastInput = 0.0f;
     static float derivativeFilter = 0.0f; // For filtering the derivative term
-    static const float alpha = 0.1; // Smoothing factor for derivative filtering
+    static const float alpha = 0.01; // Smoothing factor for derivative filtering
     static unsigned long lastTime = 0;
 
     // Update the current time
@@ -332,8 +335,8 @@ unsigned int calculatePID(float setpoint, float input) {
     // if (integralTerm > 255.0f) integralTerm = 255.0f;
     // else if (integralTerm < 0.0f) integralTerm = 0.0f;
     // Integral clamping
-    if (integralTerm > 150.0f) integralTerm = 150.0f;
-    else if (integralTerm < -150.0f) integralTerm = -150.0f;
+    if (integralTerm > 100.0f) integralTerm = 100.0f;
+    else if (integralTerm < -100.0f) integralTerm = -100.0f;
 
     // Derivative term
     float derivative = (input - lastInput) / (timeChange / 1000.0f);
@@ -352,6 +355,16 @@ unsigned int calculatePID(float setpoint, float input) {
     // Remember the last input and time for the next calculation
     lastInput = input;
     lastTime = currentTime;
+
+    // Telemetry
+    _PM(Metric("pid.currentTime", currentTime));
+    _PM(Metric("pid.timeChange", timeChange));
+    _PM(Metric("pid.error", error));
+    _PM(Metric("pid.derivative", derivative));
+    _PM(Metric("pid.P", Pout));
+    _PM(Metric("pid.I", integralTerm));
+    _PM(Metric("pid.D", Dout));
+    _PM(Metric("pid.output", output));
 
     return (unsigned int)round(output);
 }
@@ -373,16 +386,16 @@ void initDisplay() {
 void updateDisplay() {
     static uint8_t lastSetTemp;
     static float lastTemp;
-    uint8_t setBuffSize = 6, tempBuffSize = 8;
+    size_t setBuffSize = 6, tempBuffSize = 8;
 
     if (lastSetTemp != setTemp) {
         char setBuff[setBuffSize] = {};
         lastSetTemp = setTemp;
         itoa(setTemp, setBuff, 10); // convert to base-10 string
-        int setDigits = strlen(setBuff);
+        size_t setDigits = strlen(setBuff);
         setBuff[setDigits] = 'C';
         // Fill empty elements with spaces
-        for (unsigned int i = setDigits + 1; i < setBuffSize - 1; ++i) {
+        for (size_t i = setDigits + 1; i < setBuffSize - 1; ++i) {
             if (setBuff[i] == '\0') {
                 setBuff[i] = ' ';
             }
