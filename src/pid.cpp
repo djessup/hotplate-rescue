@@ -16,7 +16,7 @@ uint8_t calculatePID(float setpoint, float input) {
     // Update the current time
     unsigned long currentTime = millis();
     unsigned long timeChange = (currentTime - lastTime);
-    unsigned long timeChangeSec = (timeChange / 1000.0f);
+    float timeChangeSec = (timeChange / 1000.0f);
 
     // Compute the error
     float error = setpoint - input;
@@ -35,7 +35,7 @@ uint8_t calculatePID(float setpoint, float input) {
     else if (integralTerm < -100.0f) integralTerm = -100.0f;
 
     // Derivative term
-    float derivative = (input - lastInput) / (timeChange / timeChangeSec);
+    float derivative = (input - lastInput) / timeChangeSec;
     // float Dout = Kd * derivative;
 
     // Filter the derivative to dampen rapid fluctuations that can exacerbate oscillations

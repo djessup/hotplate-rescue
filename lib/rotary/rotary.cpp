@@ -143,7 +143,7 @@ Rotary::Rotary(uint8_t _pin1, uint8_t _pin2) {
     state = R_START;
 }
 
-unsigned char Rotary::process() {
+uint8_t Rotary::process() {
     // Grab state of input pins.
     // unsigned char pinState = (digitalRead(pin2) << 1) | digitalRead(pin1);
     unsigned char pinState = (((*pinReg2 & bit(pin2)) >> pin2) << 1) | ((*pinReg1 & bit(pin1)) >> pin1);
@@ -154,6 +154,6 @@ unsigned char Rotary::process() {
     return state & 0b00110000;
 }
 
-uint8_t Rotary::getState() {
+uint8_t Rotary::getState() const {
     return state & 0b00001111;
 }

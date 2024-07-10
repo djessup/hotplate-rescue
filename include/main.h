@@ -6,7 +6,7 @@
 // Telemetry
 #ifndef SERIAL_TELEMETRY
 #define SERIAL_TELEMETRY 0
-#endif
+#endif // SERIAL_TELEMETRY
 
 // Pin definitions
 #define HEATER_PIN 9
@@ -31,13 +31,12 @@
  * STATE MACHINE
  */
 enum State {
-    IDLE,
-    SOAK,
-    REFLOW,
-    COOLDOWN,
+  IDLE,
+  SOAK,
+  REFLOW,
+  COOLDOWN,
 };
 State advanceState(State _state);
-
 
 /**
  * BUTTON
@@ -47,11 +46,12 @@ State advanceState(State _state);
 #define BUTTON_LONG_PRESS_MILLIS 700
 
 enum ButtonResult {
-    RELEASED = 0b00, // button is not being held, no new presses seen
-    HELD = 0b01,  // button is being held down, but not long enough to register a press
-    SHORT_PRESS = 0b10, // button was short-pressed and released 
-    LONG_PRESS = 0b11, // button was long-pressed (may still be held)
+  RELEASED = 0b00, // button is not being held, no new presses seen
+  HELD = 0b01, // button is being held down, but not long enough to register a press
+  SHORT_PRESS = 0b10, // button was short-pressed and released
+  LONG_PRESS = 0b11, // button was long-pressed (may still be held)
 };
+
 ButtonResult getButtonState();
 
 void enablePinChangeInterrupt(uint8_t pin);

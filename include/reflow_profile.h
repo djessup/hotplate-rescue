@@ -7,6 +7,7 @@
 // Target temps in celsius
 #define PROFILE_SOAK_TEMP 125
 #define PROFILE_REFLOW_TEMP 180
+#define PROFILE_COOLDOWN_TEMP 50
 
 // Time temp held once target is reached
 #define PROFILE_SOAK_DURATION 120 // 2 min

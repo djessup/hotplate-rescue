@@ -12,6 +12,9 @@
       <file path="$PROJECT_DIR$/.pio/libdeps/nanoatmega328" />
       <file path="$PROJECT_DIR$/.pio/libdeps/nanoatmega328/Encoder" />
     </libraryRoots>
+    <excludeRoots>
+      <file path="$PROJECT_DIR$/.pio" />
+    </excludeRoots>
   </component>
   <component name="ExternalStorageConfigurationManager" enabled="true" />
   <component name="PlatformIOSettings">

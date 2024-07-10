@@ -23,11 +23,11 @@
 
 class Rotary {
 public:
-    Rotary(uint8_t, uint8_t);
+    Rotary(uint8_t pin1, uint8_t pin2);
     // Process pin(s)
     uint8_t process();
     // Get the last processed state
-    uint8_t getState();
+    uint8_t getState() const;
 
 private:
     uint8_t state;

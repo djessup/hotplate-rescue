@@ -3,8 +3,8 @@
 //
 
 #if DEBUG
-    #include "avr8-stub.h"
-    #include "app_api.h"
+#include "app_api.h"
+#include "avr8-stub.h"
 #endif
 
 #include "main.h"
@@ -13,30 +13,32 @@
 #include "reflow_profile.h"
 
 #include <Arduino.h>
-#include <rotary.h>
-#include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <RunningAverage.h>
 #include <TaskScheduler.h>
-
+#include <Wire.h>
+#include <rotary.h>
 
 // Next:
 // - implement tasks to ramp up to temp for soak/reflow
 // Last:
 // - watchdog check for thermal runaway
 
-// void callback();
-// Scheduler scheduler;
-// Task soakTask((TASK_SECOND * 1), TASK_FOREVER, callback);
+unsigned long taskElapsed;
+
+void soakTaskHandler();
+void reflowTaskHandler();
+void cooldownTaskHandler();
+
+Scheduler scheduler;
+Task soakTask(TASK_SECOND, TASK_FOREVER, soakTaskHandler);
+Task reflowTask(TASK_SECOND, TASK_FOREVER, reflowTaskHandler);
+Task cooldownTask(TASK_SECOND, TASK_FOREVER, cooldownTaskHandler);
 
 LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 
 // Global variables
-unsigned int setTemp = 150;
-int currentTemp = 0;
-bool heatingEnabled = false;
-volatile unsigned long lastTime = 0;
-double errSum = 0, lastErr = 0;
+volatile uint8_t setTemp = 0;
 
 volatile unsigned int encoderValue;
 
@@ -44,113 +46,139 @@ Rotary encoder(ENCODER_PIN_CLK, ENCODER_PIN_DT);
 RunningAverage temp(TEMP_SAMPLES);
 State currentState = IDLE;
 
-State advanceState(State _state) {
-    switch (_state) {
-        case IDLE:
-            return SOAK;
+State advanceState(const State _state) {
+  switch (_state) {
+    case IDLE:
+      return SOAK;
 
-        case SOAK:
-            return REFLOW;
+    case SOAK:
+      return REFLOW;
 
-        case REFLOW:
-            return COOLDOWN;
+    case REFLOW:
+      return COOLDOWN;
 
-        case COOLDOWN:
-            return IDLE;
-    
-        default:
-            return IDLE;
-            break;
-    }
+    case COOLDOWN:
+    default:
+      return IDLE;
+  }
 }
 
 /**
  * Handler for pin change interrupts for D0 to D7
  */
-ISR(PCINT2_vect) 
-{ 
-    // Holds the pin states from the last interrupt
-    static uint8_t prevPINDState = 0b00000000;
-    
-    static unsigned long last_exec = 0;  // for debouncing
-    if ((millis() - last_exec) < 1) {
-        return;
-    }
-    last_exec = millis();
-    
-    uint8_t changedBits = PIND ^ prevPINDState; // XOR to find changed bits
-    prevPINDState = PIND; // Update for next time
-    
-    // D3 and/or D4 (PCINT19 and PCINT20) have changed
-    if (changedBits & (bit(PCINT19) | bit(PCINT20))) {   
-        checkEncoder();
-    }
+ISR(PCINT2_vect) {
+  // Holds the pin states from the last interrupt
+  static uint8_t prevPINDState = 0b00000000;
+  static unsigned long last_exec = 0;
+
+  if ((millis() - last_exec) < 1) { // debounce
+    return;
+  }
+
+  last_exec = millis();
+
+  const uint8_t changedBits = PIND ^ prevPINDState; // XOR to find changed bits
+  prevPINDState = PIND; // Update for next time
+
+  // D3 and/or D4 (PCINT19 and PCINT20) have changed
+  if (changedBits & (bit(PCINT19) | bit(PCINT20))) {
+    checkEncoder();
+  }
+
 } // end of PCINT2_vect
 
-
 void setup() {
-    #if DEBUG
-    debug_init();
-    #elif SERIAL_TELEMETRY
-    Serial.begin(115200);  // Initialize serial communication
-    #endif
+#if DEBUG
+  debug_init();
+#elif SERIAL_TELEMETRY
+  Serial.begin(115200); // Initialize serial communication
+#endif
 
-    pinMode(HEATER_PIN, OUTPUT);
-    digitalWrite(HEATER_PIN, LOW);
-    pinMode(BUTTON_PIN, INPUT);
-    pinMode(THERMISTOR_PIN, INPUT);
-    // handled by Rotary.cpp already
-    pinMode(ENCODER_PIN_CLK, INPUT);
-    pinMode(ENCODER_PIN_DT, INPUT);
+  pinMode(HEATER_PIN, OUTPUT);
+  digitalWrite(HEATER_PIN, LOW);
+  pinMode(BUTTON_PIN, INPUT);
+  pinMode(THERMISTOR_PIN, INPUT);
+  // handled by Rotary.cpp already
+  pinMode(ENCODER_PIN_CLK, INPUT);
+  pinMode(ENCODER_PIN_DT, INPUT);
 
-    Wire.begin();  // Initialize I2C communication
-    delay(500);  // Wait for things to settle
+  Wire.begin(); // Initialize I2C communication
+  delay(500); // Wait for things to settle
 
-    // Start with heater off
-    lastTime = millis();
-    encoderValue = 150;
+  encoderValue = setTemp;
 
-    enablePinChangeInterrupt(ENCODER_PIN_CLK);
-    enablePinChangeInterrupt(ENCODER_PIN_DT);
+  enablePinChangeInterrupt(ENCODER_PIN_CLK);
+  enablePinChangeInterrupt(ENCODER_PIN_DT);
 
-    initDisplay();
+  initDisplay();
 
-    temp.fillValue(readTemperature(), TEMP_SAMPLES);
+  temp.fillValue(readTemperature(), TEMP_SAMPLES);
+  scheduler.addTask(soakTask);
+  scheduler.addTask(reflowTask);
+  scheduler.addTask(cooldownTask);
+  scheduler.disableAll();
+  scheduler.enable();
 }
 
 void loop() {
-    // 
-   encoderValue = constrain(encoderValue, 0, 300);
-   if (encoderValue != setTemp) {
-       setTemp = encoderValue;
-   }
+  // encoderValue = constrain(encoderValue, 0, 300);
+  // if (encoderValue != setTemp) {
+  //   setTemp = encoderValue;
+  // }
 
-    if (getButtonState() == LONG_PRESS) {
-        currentState = advanceState(currentState);
-    }
+  if (getButtonState() == LONG_PRESS) {
+    currentState = advanceState(currentState);
+  }
 
-    switch (currentState) {
-        case SOAK:
-        case REFLOW:
-            analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage()));
-            break;
+  switch (currentState) {
 
-        case COOLDOWN:
-        default:
-            digitalWrite(HEATER_PIN, LOW);
-            break;
-    }
+    case SOAK:
+      if (reflowTask.isEnabled()) reflowTask.disable();
+      if (cooldownTask.isEnabled()) cooldownTask.disable();
+      if (!soakTask.enableIfNot()) {
+        setTemp = static_cast<int8_t>(temp.getFastAverage());
+      }
+      break;
 
-    // Read temperature
-    temp.addValue(readTemperature());
+    case REFLOW:
+      if (soakTask.isEnabled()) soakTask.disable();
+      if (cooldownTask.isEnabled()) cooldownTask.disable();
+      if (!reflowTask.enableIfNot()) {
+        setTemp = static_cast<int8_t>(temp.getFastAverage());
+      }
+      break;
 
-    updateDisplay();
+    case COOLDOWN:
+      if (soakTask.isEnabled()) soakTask.disable();
+      if (reflowTask.isEnabled()) reflowTask.disable();
+      if (!cooldownTask.enableIfNot()) {
+        setTemp = static_cast<int8_t>(temp.getFastAverage());
+      }
 
-    // Telemetry
-    _PM(Metric("target", setTemp));
-    _PM(Metric("temp", temp.getFastAverage()));
+    case IDLE:
+    default:
+      break;
+  }
 
-    delay(10);
+  scheduler.execute();
+
+  if (currentState != IDLE) {
+    analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage()));
+  } else {
+    scheduler.disableAll();
+    digitalWrite(HEATER_PIN, LOW);
+  }
+
+  // Read temperature
+  temp.addValue(readTemperature());
+
+  updateDisplay();
+
+  // Telemetry
+  _PM(Metric("target", setTemp));
+  _PM(Metric("temp", temp.getFastAverage()));
+
+  delay(10);
 }
 
 /**
@@ -158,162 +186,214 @@ void loop() {
  */
 
 float readTemperature() {
-    int adcValue = analogRead(THERMISTOR_PIN); // Read the analog value
-    float resistance = SERIES_RESISTOR / (1023.0 / adcValue - 1); // Calculate resistance
+  const int adcValue = analogRead(THERMISTOR_PIN); // Read the analog value
+  const float resistance = SERIES_RESISTOR / (1023.0 / adcValue - 1); // Calculate resistance
 
-    // Calculate temperature using the Steinhart-Hart equation
-    float steinhart;
-    steinhart = resistance / THERMISTOR_NOMINAL; // (R/Ro)
-    steinhart = log(steinhart); // ln(R/Ro)
-    steinhart /= B_COEFFICIENT; // 1/B * ln(R/Ro)
-    steinhart += 1.0 / (TEMPERATURE_NOMINAL + 273.15); // + (1/To)
-    steinhart = 1.0 / steinhart; // Invert
-    steinhart -= 273.15; // Convert to Celsius
+  // Calculate temperature using the Steinhart-Hart equation
+  float steinhart = resistance / THERMISTOR_NOMINAL; // (R/Ro)
+  steinhart = log(steinhart); // ln(R/Ro)   NOLINT(*-narrowing-conversions, *-type-promotion-in-math-fn)
+  steinhart /= B_COEFFICIENT; // 1/B * ln(R/Ro)
+  steinhart += 1.0f / (TEMPERATURE_NOMINAL + 273.15f); // + (1/To)
+  steinhart = 1.0f / steinhart; // Invert
+  steinhart -= 273.15f; // Convert to Celsius
 
-    return steinhart;
+  return steinhart;
 }
 
-
 /**
- * LCD DISPLAY 
+ * LCD DISPLAY
  */
 
 /**
  * Starts the display and prints the static portions
  */
 void initDisplay() {
-    lcd.begin(16, 2);
-    lcd.backlight();
+  lcd.begin(16, 2);
+  lcd.backlight();
 
-    lcd.setCursor(0, 0);
-    lcd.print("Set:");
-    lcd.setCursor(0, 1);
-    lcd.print("Cur:");
+  lcd.setCursor(0, 0);
+  lcd.print("Set:");
+  lcd.setCursor(0, 1);
+  lcd.print("Cur:");
 } // end of initDisplay
 
+/**
+ * Update the display based on the current state
+ */
 void updateDisplay() {
-    static uint8_t lastSetTemp;
-    static float lastTemp;
-    size_t setBuffSize = 6, tempBuffSize = 8;
+  constexpr size_t setBuffSize = 6;
+  char setBuff[setBuffSize] = {};
+  static uint8_t lastSetTemp;
+  static float lastTemp;
+  const float currentTemp = temp.getFastAverage();
 
+  // Set the cursor position to print the set temperature
+  lcd.setCursor(5, 0);
+
+  if (currentState == SOAK || currentState == REFLOW || currentState == COOLDOWN) {
     if (lastSetTemp != setTemp) {
-        char setBuff[setBuffSize] = {};
-        lastSetTemp = setTemp;
-        itoa(setTemp, setBuff, 10); // convert to base-10 string
-        size_t setDigits = strlen(setBuff);
-        setBuff[setDigits] = 'C';
-        // Fill empty elements with spaces
-        for (size_t i = setDigits + 1; i < setBuffSize - 1; ++i) {
-            if (setBuff[i] == '\0') {
-                setBuff[i] = ' ';
-            }
+      lastSetTemp = setTemp;
+      itoa(setTemp, setBuff, 10); // convert to base-10 string
+      const size_t setDigits = strlen(setBuff);
+      setBuff[setDigits] = 'C';
+      // Fill empty elements with spaces
+      for (size_t i = setDigits + 1; i < setBuffSize - 1; ++i) {
+        if (setBuff[i] == '\0') {
+          setBuff[i] = ' ';
         }
-        lcd.setCursor(5, 0);
-        lcd.print(setBuff);
+      }
     }
+  } else {
+    strcpy(setBuff, "---C ");
+  }
+  lcd.print(setBuff);
 
-    if (lastTemp != temp.getFastAverage()) {
-        lastTemp = temp.getFastAverage();
-        char tempBuff[tempBuffSize] = { };
-        dtostrf(lastTemp, 5, 1, tempBuff); // convert to xxx.yy string
-        
-        lcd.setCursor(5, 1);
-        lcd.print(tempBuff);
-        lcd.print("C");
-    }
+  if (lastTemp != currentTemp) {
+    lastTemp = currentTemp;
+    constexpr size_t tempBuffSize = 8;
+    char tempBuff[tempBuffSize] = {};
+    dtostrf(lastTemp, 5, 1, tempBuff); // convert to xxx.yy string
 
-    lcd.setCursor(12, 0);
-    char stateStr[5] = {};
-    switch (currentState) {
-        case IDLE:
-            strcpy(stateStr, "IDLE");
-            break;
-        case SOAK:
-            strcpy(stateStr, "SOAK");
-            break;
-        case REFLOW:
-            strcpy(stateStr, "FLOW");
-            break;
-        case COOLDOWN:
-            strcpy(stateStr, "COOL");
-            break;
-        default:
-            strcpy(stateStr, "UHOH");
-            break;
-    }
-    lcd.print(stateStr);
+    lcd.setCursor(5, 1);
+    lcd.print(tempBuff);
+    lcd.print("C");
+  }
+
+  lcd.setCursor(12, 0);
+  char stateStr[5] = {};
+  switch (currentState) {
+    case IDLE:
+      strcpy(stateStr, "IDLE");
+      break;
+    case SOAK:
+      strcpy(stateStr, "SOAK");
+      break;
+    case REFLOW:
+      strcpy(stateStr, "FLOW");
+      break;
+    case COOLDOWN:
+      strcpy(stateStr, "COOL");
+      break;
+    default:
+      strcpy(stateStr, "UHOH");
+      break;
+  }
+  lcd.print(stateStr);
 } // end of updateDisplay
-
-
 
 /**
  * Updates the Encoder state machine and checks for rotation events
  */
 void checkEncoder() {
-    unsigned char state = encoder.process();
-    if (state == DIR_CW && encoderValue < TEMP_MAX) {
-        encoderValue++;
-    } else if (state == DIR_CCW && encoderValue > TEMP_MIN) {
-        encoderValue--;
-    }
+  const uint8_t encoderState = encoder.process();
+  if (encoderState == DIR_CW && encoderValue < TEMP_MAX) {
+    encoderValue++;
+  } else if (encoderState == DIR_CCW && encoderValue > TEMP_MIN) {
+    encoderValue--;
+  }
 } // end of checkEncoder
 
+void enablePinChangeInterrupt(const uint8_t pin) {
+  // uint8_t port = digitalPinToPort(pin);
+  volatile uint8_t *pcmsk = digitalPinToPCMSK(pin);
+  const uint8_t PCICRbit = digitalPinToPCICRbit(pin);
+  const uint8_t PCMSKbit = digitalPinToPCMSKbit(pin);
 
-void enablePinChangeInterrupt(uint8_t pin) {
-    // uint8_t port = digitalPinToPort(pin);
-    volatile uint8_t *pcmsk = digitalPinToPCMSK(pin);
-    uint8_t PCICRbit = digitalPinToPCICRbit(pin);
-    uint8_t PCMSKbit = digitalPinToPCMSKbit(pin);
+  // Enable the pin change interrupt for the specific pin
+  *pcmsk |= bit(PCMSKbit);
 
-    // Enable the pin change interrupt for the specific pin
-    *pcmsk |= bit(PCMSKbit);
+  // Clear any outstanding interrupts
+  PCIFR |= bit(PCICRbit);
 
-    // Clear any outstanding interrupts
-    PCIFR |= bit(PCICRbit);
-
-    // Enable pin change interrupts for the port
-    PCICR |= bit(PCICRbit);
+  // Enable pin change interrupts for the port
+  PCICR |= bit(PCICRbit);
 }
 
 /**
  * Returns the state of the button or button presses
  */
 ButtonResult getButtonState() {
-    // If pressStart > 0 the button was released since the last check
-    static unsigned long buttonPressStart = 0, timeHeld = 0;
-    static bool newPress = true;
+  // If pressStart > 0 the button was released since the last check
+  static unsigned long buttonPressStart = 0, timeHeld = 0;
+  static bool newPress = true;
 
-    unsigned long now = millis();
-    ButtonResult result = RELEASED;
-    
-    if (digitalRead(BUTTON_PIN)) { // button held
-        if (buttonPressStart == 0) { // is this the start of the press?
-            buttonPressStart = now;
-        }
-        
-        timeHeld = now - buttonPressStart; // Update time held
-        
-        if (timeHeld >= BUTTON_LONG_PRESS_MILLIS && newPress) { // long-press acheivement unlocked!
-            result = LONG_PRESS;
-            newPress = false;
-        } else if (timeHeld >= BUTTON_SHORT_PRESS_MILLIS) { // basically a debounce...
-            result = HELD;
-        }
+  const unsigned long now = millis();
+  ButtonResult result = RELEASED;
 
-    } else { // button released
-        result = (timeHeld >= BUTTON_SHORT_PRESS_MILLIS && newPress) ? SHORT_PRESS : RELEASED;
-
-        // Start a new press sequence
-        timeHeld = 0;
-        buttonPressStart = 0;
-        newPress = true;
+  if (digitalRead(BUTTON_PIN)) { // button held
+    if (buttonPressStart == 0) { // is this the start of the press?
+      buttonPressStart = now;
     }
 
-    // Telemetry
-    _PM(Metric("button.pressStart", buttonPressStart));
-    _PM(Metric("button.newPress", newPress));
-    _PM(Metric("button.timeHeld", timeHeld));
-    _PM(Metric("button.result", result));
+    timeHeld = now - buttonPressStart; // Update time held
 
-    return result;
+    if (timeHeld >= BUTTON_LONG_PRESS_MILLIS &&
+      newPress) { // long-press acheivement unlocked!
+      result = LONG_PRESS;
+      newPress = false;
+    } else if (timeHeld >=
+      BUTTON_SHORT_PRESS_MILLIS) { // basically a debounce...
+      result = HELD;
+    }
+
+  } else { // button released
+    result = (timeHeld >= BUTTON_SHORT_PRESS_MILLIS && newPress)
+        ? SHORT_PRESS
+        : RELEASED;
+
+    // Start a new press sequence
+    timeHeld = 0;
+    buttonPressStart = 0;
+    newPress = true;
+  }
+
+  // Telemetry
+  _PM(Metric("button.pressStart", buttonPressStart));
+  _PM(Metric("button.newPress", newPress));
+  _PM(Metric("button.timeHeld", timeHeld));
+  _PM(Metric("button.result", result));
+
+  return result;
 } // end of getButtonState
+
+/**
+ * REFLOW PROFILE TASKS
+ */
+void soakTaskHandler() {
+  if (soakTask.isFirstIteration()) {
+    taskElapsed = 0;
+  }
+  if (setTemp < PROFILE_SOAK_TEMP) { // ramp-up to soak temp
+    setTemp += PROFILE_SOAK_RAMP_RATE;
+  } else { // hold soak temp for PROFILE_SOAK_DURATION
+    if (++taskElapsed >= PROFILE_SOAK_DURATION) {
+      currentState = advanceState(currentState);
+    }
+  }
+}
+
+void reflowTaskHandler() {
+  if (reflowTask.isFirstIteration()) {
+    taskElapsed = 0;
+  }
+
+  if (setTemp < PROFILE_REFLOW_TEMP) { // ramp-up to soak temp
+    setTemp = min(setTemp + PROFILE_REFLOW_RAMP_RATE, PROFILE_REFLOW_TEMP);
+  } else { // hold soak temp for PROFILE_SOAK_DURATION
+    if (++taskElapsed >= PROFILE_REFLOW_DURATION) {
+      currentState = advanceState(currentState);
+    }
+  }
+}
+void cooldownTaskHandler() {
+  if (cooldownTask.isFirstIteration()) {
+    taskElapsed = 0;
+  }
+  if (setTemp > PROFILE_COOLDOWN_TEMP) { // ramp-up to soak temp
+    setTemp = max(setTemp + PROFILE_COOLDOWN_RAMP_RATE, PROFILE_COOLDOWN_TEMP);
+    setTemp -= PROFILE_COOLDOWN_RAMP_RATE;
+  } else if (temp.getFastAverage() <= PROFILE_COOLDOWN_TEMP) { // hold soak temp for PROFILE_SOAK_DURATION
+      currentState = advanceState(currentState);
+  }
+  ++taskElapsed;
+}
