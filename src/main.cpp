@@ -2,18 +2,17 @@
 // Created by DJ on 27/06/2024.
 //
 
-#ifndef HOTPLATE_RESCUE_MAIN_H
-#define HOTPLATE_RESCUE_MAIN_H
-
-#include "main.h"
-#include "reflow_profile.h"
-
 #if DEBUG
     #include "avr8-stub.h"
     #include "app_api.h"
 #endif
 
-#include "Arduino.h"
+#include "main.h"
+#include "metric.h"
+#include "pid.h"
+#include "reflow_profile.h"
+
+#include <Arduino.h>
 #include <rotary.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -31,6 +30,7 @@
 // Task soakTask((TASK_SECOND * 1), TASK_FOREVER, callback);
 
 LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
+
 // Global variables
 unsigned int setTemp = 150;
 int currentTemp = 0;
@@ -43,74 +43,6 @@ volatile unsigned int encoderValue;
 Rotary encoder(ENCODER_PIN_CLK, ENCODER_PIN_DT);
 RunningAverage temp(TEMP_SAMPLES);
 State currentState = IDLE;
-
-/*
- * Pin Change Interrupts
- * D0	  PCINT16 (PCMSK2 / PCIF2 / PCIE2)
- * D1	  PCINT17 (PCMSK2 / PCIF2 / PCIE2)
- * D2	  PCINT18 (PCMSK2 / PCIF2 / PCIE2)
- * D3	  PCINT19 (PCMSK2 / PCIF2 / PCIE2)
- * D4	  PCINT20 (PCMSK2 / PCIF2 / PCIE2)
- * D5	  PCINT21 (PCMSK2 / PCIF2 / PCIE2)
- * D6	  PCINT22 (PCMSK2 / PCIF2 / PCIE2)
- * D7	  PCINT23 (PCMSK2 / PCIF2 / PCIE2)
- * D8	  PCINT0  (PCMSK0 / PCIF0 / PCIE0)
- * D9	  PCINT1  (PCMSK0 / PCIF0 / PCIE0)
- * D10	  PCINT2  (PCMSK0 / PCIF0 / PCIE0)
- * D11	  PCINT3  (PCMSK0 / PCIF0 / PCIE0)
- * D12	  PCINT4  (PCMSK0 / PCIF0 / PCIE0)
- * D13	  PCINT5  (PCMSK0 / PCIF0 / PCIE0)
- * A0	  PCINT8  (PCMSK1 / PCIF1 / PCIE1)
- * A1	  PCINT9  (PCMSK1 / PCIF1 / PCIE1)
- * A2	  PCINT10 (PCMSK1 / PCIF1 / PCIE1)
- * A3	  PCINT11 (PCMSK1 / PCIF1 / PCIE1)
- * A4	  PCINT12 (PCMSK1 / PCIF1 / PCIE1)
- * A5	  PCINT13 (PCMSK1 / PCIF1 / PCIE1)
- *
- * To handle a pin change interrupt you need to:
- *  - Specify which pin in the group. This is the PCMSKn variable (where n is 0, 1 or 2 from the table below).
- *     You can have interrupts on more than one pin.
- *  - Enable the appropriate group of interrupts (0, 1 or 2)
- *  - Supply an interrupt handler as shown above
- */
-//
-//ISR (PCINT0_vect)
-//{
-//    // handle pin change interrupt for D8 to D13 here
-//}  // end of PCINT0_vect
-//
-//ISR (PCINT1_vect)
-//{
-//    // handle pin change interrupt for A0 to A5 here
-//}  // end of PCINT1_vect
-//
-//ISR (PCINT2_vect)
-//{
-//    // handle pin change interrupt for D0 to D7 here
-//}  // end of PCINT2_vect
-//
-////
-////void setup ()
-////{
-////    // pin change interrupt (example for D9)
-////    PCMSK0 |= bit (PCINT1);  // want pin 9
-////    PCIFR  |= bit (PCIF0);   // clear any outstanding interrupts
-////    PCICR  |= bit (PCIE0);   // enable pin change interrupts for D8 to D13
-////}
-//
-//void ISR_encoderClk() {
-//    static unsigned long last_exec = 0;  // for debouncing
-//
-//    if ((millis() - last_exec) < 10) {
-//        return;
-//    }
-//
-//    encoderValue = (digitalRead(ENCODER_PIN_DT) == HIGH) ?  encoderValue + 1 : encoderValue - 1;
-//
-//    last_exec = millis();
-//    lastTime = last_exec;
-//}
-
 
 State advanceState(State _state) {
     switch (_state) {
@@ -132,9 +64,11 @@ State advanceState(State _state) {
     }
 }
 
+/**
+ * Handler for pin change interrupts for D0 to D7
+ */
 ISR(PCINT2_vect) 
-{  // handle pin change interrupt for D0 to D7
-
+{ 
     // Holds the pin states from the last interrupt
     static uint8_t prevPINDState = 0b00000000;
     
@@ -151,72 +85,8 @@ ISR(PCINT2_vect)
     if (changedBits & (bit(PCINT19) | bit(PCINT20))) {   
         checkEncoder();
     }
-}
+} // end of PCINT2_vect
 
-
-void checkEncoder() {
-    unsigned char state = encoder.process();
-    if (state == DIR_CW && encoderValue < TEMP_MAX) {
-        encoderValue++;
-    } else if (state == DIR_CCW && encoderValue > TEMP_MIN) {
-        encoderValue--;
-    }
-}
-// end of PCINT2_vect
-
-
-void enablePinChangeInterrupt(uint8_t pin) {
-    // uint8_t port = digitalPinToPort(pin);
-    volatile uint8_t *pcmsk = digitalPinToPCMSK(pin);
-    uint8_t PCICRbit = digitalPinToPCICRbit(pin);
-    uint8_t PCMSKbit = digitalPinToPCMSKbit(pin);
-
-    // Enable the pin change interrupt for the specific pin
-    *pcmsk |= bit(PCMSKbit);
-
-    // Clear any outstanding interrupts
-    PCIFR |= bit(PCICRbit);
-
-    // Enable pin change interrupts for the port
-    PCICR |= bit(PCICRbit);
-}
-
-
-ButtonResult getButtonState() {
-    // If pressStart > 0 the button was released since the last check
-    static unsigned long buttonPressStart = 0, timeHeld = 0;
-    unsigned long now = millis();
-
-    ButtonResult result = RELEASED;
-    
-    if (digitalRead(BUTTON_PIN)) { // button held
-        if (buttonPressStart == 0) { // is this the start of the press?
-            buttonPressStart = now;
-        }
-
-        // Update time held
-        timeHeld = now - buttonPressStart;
-        
-        if (timeHeld >= BUTTON_LONG_PRESS_MILLIS) { // long-press acheivement unlocked!
-            result = LONG_PRESS;
-            buttonPressStart = 0; // start a new press sequence to avoid immediate re-triggering
-        } else if (timeHeld >= BUTTON_SHORT_PRESS_MILLIS) {
-            result = HELD;
-        }
-
-    } else { // button released
-        result = (timeHeld >= BUTTON_SHORT_PRESS_MILLIS) ? SHORT_PRESS : RELEASED;
-        timeHeld = 0;
-        buttonPressStart = 0;
-    }
-
-    // Telemetry
-    _PM(Metric("button.pressStart", buttonPressStart));
-    _PM(Metric("button.timeHeld", timeHeld));
-    _PM(Metric("button.result", result));
-
-    return result;
-}
 
 void setup() {
     #if DEBUG
@@ -261,10 +131,6 @@ void loop() {
 
     switch (currentState) {
         case SOAK:
-            
-            analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage())*.75);
-            break;
-
         case REFLOW:
             analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage()));
             break;
@@ -307,81 +173,23 @@ float readTemperature() {
     return steinhart;
 }
 
-/**
- * PID CONTROLLER
- */
-
-unsigned int calculatePID(float setpoint, float input) {
-    static float integralTerm = 0.0f;
-    static float lastInput = 0.0f;
-    static float derivativeFilter = 0.0f; // For filtering the derivative term
-    static const float alpha = 0.01; // Smoothing factor for derivative filtering
-    static unsigned long lastTime = 0;
-
-    // Update the current time
-    unsigned long currentTime = millis();
-    unsigned long timeChange = (currentTime - lastTime);
-
-    // Compute the error
-    float error = setpoint - input;
-
-    // Proportional term
-    float Pout = Kp * error;
-
-    // Integral term
-    integralTerm += (Ki * error * (timeChange / 1000.0f));
-
-    // Anti-windup: prevent integral term from getting too large
-    // if (integralTerm > 255.0f) integralTerm = 255.0f;
-    // else if (integralTerm < 0.0f) integralTerm = 0.0f;
-    // Integral clamping
-    if (integralTerm > 100.0f) integralTerm = 100.0f;
-    else if (integralTerm < -100.0f) integralTerm = -100.0f;
-
-    // Derivative term
-    float derivative = (input - lastInput) / (timeChange / 1000.0f);
-    // float Dout = Kd * derivative;
-    // Derivative filter
-    derivativeFilter = (alpha * derivative) + ((1 - alpha) * derivativeFilter);
-    float Dout = Kd * derivativeFilter;
-
-    // Compute the total output
-    float output = Pout + integralTerm - Dout;
-
-    // Restrict the output to the range 0-255
-    if (output > 255.0f) output = 255.0f;
-    else if (output < 0.0f) output = 0.0f;
-
-    // Remember the last input and time for the next calculation
-    lastInput = input;
-    lastTime = currentTime;
-
-    // Telemetry
-    _PM(Metric("pid.currentTime", currentTime));
-    _PM(Metric("pid.timeChange", timeChange));
-    _PM(Metric("pid.error", error));
-    _PM(Metric("pid.derivative", derivative));
-    _PM(Metric("pid.P", Pout));
-    _PM(Metric("pid.I", integralTerm));
-    _PM(Metric("pid.D", Dout));
-    _PM(Metric("pid.output", output));
-
-    return (unsigned int)round(output);
-}
-
 
 /**
  * LCD DISPLAY 
  */
 
+/**
+ * Starts the display and prints the static portions
+ */
 void initDisplay() {
     lcd.begin(16, 2);
     lcd.backlight();
+
     lcd.setCursor(0, 0);
     lcd.print("Set:");
     lcd.setCursor(0, 1);
     lcd.print("Cur:");
-}
+} // end of initDisplay
 
 void updateDisplay() {
     static uint8_t lastSetTemp;
@@ -434,5 +242,78 @@ void updateDisplay() {
             break;
     }
     lcd.print(stateStr);
+} // end of updateDisplay
+
+
+
+/**
+ * Updates the Encoder state machine and checks for rotation events
+ */
+void checkEncoder() {
+    unsigned char state = encoder.process();
+    if (state == DIR_CW && encoderValue < TEMP_MAX) {
+        encoderValue++;
+    } else if (state == DIR_CCW && encoderValue > TEMP_MIN) {
+        encoderValue--;
+    }
+} // end of checkEncoder
+
+
+void enablePinChangeInterrupt(uint8_t pin) {
+    // uint8_t port = digitalPinToPort(pin);
+    volatile uint8_t *pcmsk = digitalPinToPCMSK(pin);
+    uint8_t PCICRbit = digitalPinToPCICRbit(pin);
+    uint8_t PCMSKbit = digitalPinToPCMSKbit(pin);
+
+    // Enable the pin change interrupt for the specific pin
+    *pcmsk |= bit(PCMSKbit);
+
+    // Clear any outstanding interrupts
+    PCIFR |= bit(PCICRbit);
+
+    // Enable pin change interrupts for the port
+    PCICR |= bit(PCICRbit);
 }
-#endif //HOTPLATE_RESCUE_MAIN_H
+
+/**
+ * Returns the state of the button or button presses
+ */
+ButtonResult getButtonState() {
+    // If pressStart > 0 the button was released since the last check
+    static unsigned long buttonPressStart = 0, timeHeld = 0;
+    static bool newPress = true;
+
+    unsigned long now = millis();
+    ButtonResult result = RELEASED;
+    
+    if (digitalRead(BUTTON_PIN)) { // button held
+        if (buttonPressStart == 0) { // is this the start of the press?
+            buttonPressStart = now;
+        }
+        
+        timeHeld = now - buttonPressStart; // Update time held
+        
+        if (timeHeld >= BUTTON_LONG_PRESS_MILLIS && newPress) { // long-press acheivement unlocked!
+            result = LONG_PRESS;
+            newPress = false;
+        } else if (timeHeld >= BUTTON_SHORT_PRESS_MILLIS) { // basically a debounce...
+            result = HELD;
+        }
+
+    } else { // button released
+        result = (timeHeld >= BUTTON_SHORT_PRESS_MILLIS && newPress) ? SHORT_PRESS : RELEASED;
+
+        // Start a new press sequence
+        timeHeld = 0;
+        buttonPressStart = 0;
+        newPress = true;
+    }
+
+    // Telemetry
+    _PM(Metric("button.pressStart", buttonPressStart));
+    _PM(Metric("button.newPress", newPress));
+    _PM(Metric("button.timeHeld", timeHeld));
+    _PM(Metric("button.result", result));
+
+    return result;
+} // end of getButtonState
