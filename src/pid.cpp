@@ -31,8 +31,8 @@ uint8_t calculatePID(float setpoint, float input) {
     // if (integralTerm > 255.0f) integralTerm = 255.0f;
     // else if (integralTerm < 0.0f) integralTerm = 0.0f;
     // Integral clamping
-    if (integralTerm > 100.0f) integralTerm = 100.0f;
-    else if (integralTerm < -100.0f) integralTerm = -100.0f;
+    if (integralTerm > INTEGRAL_CAP) integralTerm = INTEGRAL_CAP;
+    else if (integralTerm < -INTEGRAL_CAP) integralTerm = -INTEGRAL_CAP;
 
     // Derivative term
     float derivative = (input - lastInput) / timeChangeSec;
