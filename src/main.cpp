@@ -22,7 +22,6 @@
 // Next:
 // - do task vars need to be volatile?
 // - show time remaining/elapsed on display
-// - implement pwm limiting
 // - led status indicator?
 // Last:
 // - watchdog check for thermal runaway

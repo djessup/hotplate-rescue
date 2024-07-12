@@ -45,8 +45,8 @@ uint8_t calculatePID(float setpoint, float input) {
     // Compute the total output
     float output = Pout + integralTerm - Dout;
 
-    // Restrict the output to the range 0-255
-    if (output > 255.0f) output = 255.0f;
+    // Restrict the output to the range 0-PWM_MAX
+    if (output > PWM_MAX) output = PWM_MAX;
     else if (output < 0.0f) output = 0.0f;
 
     // Remember the last input and time for the next calculation
