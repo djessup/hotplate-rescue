@@ -20,11 +20,15 @@
 #include <rotary.h>
 
 // Next:
-// - implement tasks to ramp up to temp for soak/reflow
+// - fix cooldown task (doesnt update settemp properly since migrating setpoint to float)
+// - do task vars need to be volatile?
+// - show time remaining/elapsed on display
+// - implement pwm limiting
+// - led status indicator?
 // Last:
 // - watchdog check for thermal runaway
 
-unsigned long taskElapsed;
+volatile unsigned long taskElapsed;
 
 void soakTaskHandler();
 void reflowTaskHandler();
@@ -38,7 +42,7 @@ Task cooldownTask(TASK_SECOND, TASK_FOREVER, cooldownTaskHandler);
 LiquidCrystal_I2C lcd(I2C_ADDR, 16, 2);
 
 // Global variables
-volatile uint8_t setTemp = 0;
+volatile float setTemp = 0;
 
 volatile unsigned int encoderValue;
 
@@ -105,7 +109,7 @@ void setup() {
   Wire.begin(); // Initialize I2C communication
   delay(500); // Wait for things to settle
 
-  encoderValue = setTemp;
+  encoderValue = static_cast<int>(setTemp);
 
   enablePinChangeInterrupt(ENCODER_PIN_CLK);
   enablePinChangeInterrupt(ENCODER_PIN_DT);
@@ -130,13 +134,14 @@ void loop() {
     currentState = advanceState(currentState);
   }
 
+  // Set the active task based on the current state
   switch (currentState) {
 
     case SOAK:
       if (reflowTask.isEnabled()) reflowTask.disable();
       if (cooldownTask.isEnabled()) cooldownTask.disable();
       if (!soakTask.enableIfNot()) {
-        setTemp = static_cast<int8_t>(temp.getFastAverage());
+        setTemp = temp.getFastAverage();
       }
       break;
 
@@ -144,7 +149,7 @@ void loop() {
       if (soakTask.isEnabled()) soakTask.disable();
       if (cooldownTask.isEnabled()) cooldownTask.disable();
       if (!reflowTask.enableIfNot()) {
-        setTemp = static_cast<int8_t>(temp.getFastAverage());
+        setTemp = temp.getFastAverage();
       }
       break;
 
@@ -152,7 +157,7 @@ void loop() {
       if (soakTask.isEnabled()) soakTask.disable();
       if (reflowTask.isEnabled()) reflowTask.disable();
       if (!cooldownTask.enableIfNot()) {
-        setTemp = static_cast<int8_t>(temp.getFastAverage());
+        setTemp = temp.getFastAverage();
       }
 
     case IDLE:
@@ -160,8 +165,10 @@ void loop() {
       break;
   }
 
+  // Run the scheduler task(s)
   scheduler.execute();
 
+  // Update the heater output
   if (currentState != IDLE) {
     analogWrite(HEATER_PIN, calculatePID(setTemp, temp.getFastAverage()));
   } else {
@@ -169,16 +176,17 @@ void loop() {
     digitalWrite(HEATER_PIN, LOW);
   }
 
-  // Read temperature
+  // Update the temperature buffer
   temp.addValue(readTemperature());
 
+  // Update the LCD display
   updateDisplay();
 
   // Telemetry
   _PM(Metric("target", setTemp));
   _PM(Metric("temp", temp.getFastAverage()));
 
-  delay(10);
+  // delay(10);
 }
 
 /**
@@ -223,7 +231,7 @@ void initDisplay() {
 void updateDisplay() {
   constexpr size_t setBuffSize = 6;
   char setBuff[setBuffSize] = {};
-  static uint8_t lastSetTemp;
+  static float lastSetTemp;
   static float lastTemp;
   const float currentTemp = temp.getFastAverage();
 
@@ -233,20 +241,29 @@ void updateDisplay() {
   if (currentState == SOAK || currentState == REFLOW || currentState == COOLDOWN) {
     if (lastSetTemp != setTemp) {
       lastSetTemp = setTemp;
-      itoa(setTemp, setBuff, 10); // convert to base-10 string
-      const size_t setDigits = strlen(setBuff);
-      setBuff[setDigits] = 'C';
-      // Fill empty elements with spaces
-      for (size_t i = setDigits + 1; i < setBuffSize - 1; ++i) {
-        if (setBuff[i] == '\0') {
-          setBuff[i] = ' ';
-        }
-      }
+      constexpr size_t tempBuffSize = 8;
+      char tempBuff[tempBuffSize] = {};
+      dtostrf(lastSetTemp, 5, 1, tempBuff); // convert to xxx.yy string
+
+      // Integer setTemp string conversion - no longer needed
+      // lastSetTemp = setTemp;
+      // itoa(setTemp, setBuff, 10); // convert to base-10 string
+      // const size_t setDigits = strlen(setBuff);
+      // setBuff[setDigits] = 'C';
+      // // Fill empty elements with spaces
+      // for (size_t i = setDigits + 1; i < setBuffSize - 1; ++i) {
+      //   if (setBuff[i] == '\0') {
+      //     setBuff[i] = ' ';
+      //   }
+      // }
+
+      lcd.print(tempBuff);
+      lcd.print("C");
     }
   } else {
-    strcpy(setBuff, "---C ");
+    strcpy(setBuff, "---.-C ");
+    lcd.print(setBuff);
   }
-  lcd.print(setBuff);
 
   if (lastTemp != currentTemp) {
     lastTemp = currentTemp;
@@ -378,7 +395,7 @@ void reflowTaskHandler() {
   }
 
   if (setTemp < PROFILE_REFLOW_TEMP) { // ramp-up to soak temp
-    setTemp = min(setTemp + PROFILE_REFLOW_RAMP_RATE, PROFILE_REFLOW_TEMP);
+    setTemp = min((setTemp + PROFILE_REFLOW_RAMP_RATE), PROFILE_REFLOW_TEMP);
   } else { // hold soak temp for PROFILE_SOAK_DURATION
     if (++taskElapsed >= PROFILE_REFLOW_DURATION) {
       currentState = advanceState(currentState);
@@ -390,7 +407,7 @@ void cooldownTaskHandler() {
     taskElapsed = 0;
   }
   if (setTemp > PROFILE_COOLDOWN_TEMP) { // ramp-up to soak temp
-    setTemp = max(setTemp + PROFILE_COOLDOWN_RAMP_RATE, PROFILE_COOLDOWN_TEMP);
+    setTemp = max(setTemp - PROFILE_COOLDOWN_RAMP_RATE, PROFILE_COOLDOWN_TEMP);
     setTemp -= PROFILE_COOLDOWN_RAMP_RATE;
   } else if (temp.getFastAverage() <= PROFILE_COOLDOWN_TEMP) { // hold soak temp for PROFILE_SOAK_DURATION
       currentState = advanceState(currentState);
