@@ -20,7 +20,6 @@
 #include <rotary.h>
 
 // Next:
-// - fix cooldown task (doesnt update settemp properly since migrating setpoint to float)
 // - do task vars need to be volatile?
 // - show time remaining/elapsed on display
 // - implement pwm limiting
@@ -141,7 +140,7 @@ void loop() {
       if (reflowTask.isEnabled()) reflowTask.disable();
       if (cooldownTask.isEnabled()) cooldownTask.disable();
       if (!soakTask.enableIfNot()) {
-        setTemp = temp.getFastAverage();
+        setTemp = round(temp.getFastAverage());
       }
       break;
 
@@ -149,7 +148,7 @@ void loop() {
       if (soakTask.isEnabled()) soakTask.disable();
       if (cooldownTask.isEnabled()) cooldownTask.disable();
       if (!reflowTask.enableIfNot()) {
-        setTemp = temp.getFastAverage();
+        setTemp = round(temp.getFastAverage());
       }
       break;
 
@@ -157,7 +156,7 @@ void loop() {
       if (soakTask.isEnabled()) soakTask.disable();
       if (reflowTask.isEnabled()) reflowTask.disable();
       if (!cooldownTask.enableIfNot()) {
-        setTemp = temp.getFastAverage();
+        setTemp = round(temp.getFastAverage());
       }
 
     case IDLE:
@@ -408,7 +407,6 @@ void cooldownTaskHandler() {
   }
   if (setTemp > PROFILE_COOLDOWN_TEMP) { // ramp-up to soak temp
     setTemp = max(setTemp - PROFILE_COOLDOWN_RAMP_RATE, PROFILE_COOLDOWN_TEMP);
-    setTemp -= PROFILE_COOLDOWN_RAMP_RATE;
   } else if (temp.getFastAverage() <= PROFILE_COOLDOWN_TEMP) { // hold soak temp for PROFILE_SOAK_DURATION
       currentState = advanceState(currentState);
   }
