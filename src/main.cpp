@@ -139,7 +139,7 @@ void loop() {
       if (reflowTask.isEnabled()) reflowTask.disable();
       if (cooldownTask.isEnabled()) cooldownTask.disable();
       if (!soakTask.enableIfNot()) {
-        setTemp = round(temp.getFastAverage());
+        setTemp = min(round(temp.getFastAverage()), PROFILE_SOAK_TEMP);
       }
       break;
 
@@ -147,7 +147,7 @@ void loop() {
       if (soakTask.isEnabled()) soakTask.disable();
       if (cooldownTask.isEnabled()) cooldownTask.disable();
       if (!reflowTask.enableIfNot()) {
-        setTemp = round(temp.getFastAverage());
+        setTemp = min(round(temp.getFastAverage()), PROFILE_REFLOW_TEMP);
       }
       break;
 
@@ -155,7 +155,7 @@ void loop() {
       if (soakTask.isEnabled()) soakTask.disable();
       if (reflowTask.isEnabled()) reflowTask.disable();
       if (!cooldownTask.enableIfNot()) {
-        setTemp = round(temp.getFastAverage());
+        setTemp = max(round(temp.getFastAverage()), PROFILE_COOLDOWN_TEMP);
       }
 
     case IDLE:
@@ -227,40 +227,23 @@ void initDisplay() {
  * Update the display based on the current state
  */
 void updateDisplay() {
-  constexpr size_t setBuffSize = 6;
-  char setBuff[setBuffSize] = {};
-  static float lastSetTemp;
-  static float lastTemp;
+  static float lastSetTemp, lastTemp;
   const float currentTemp = temp.getFastAverage();
 
   // Set the cursor position to print the set temperature
   lcd.setCursor(5, 0);
-
   if (currentState == SOAK || currentState == REFLOW || currentState == COOLDOWN) {
     if (lastSetTemp != setTemp) {
-      lastSetTemp = setTemp;
       constexpr size_t tempBuffSize = 8;
       char tempBuff[tempBuffSize] = {};
+      lastSetTemp = setTemp;
       dtostrf(lastSetTemp, 5, 1, tempBuff); // convert to xxx.yy string
-
-      // Integer setTemp string conversion - no longer needed
-      // lastSetTemp = setTemp;
-      // itoa(setTemp, setBuff, 10); // convert to base-10 string
-      // const size_t setDigits = strlen(setBuff);
-      // setBuff[setDigits] = 'C';
-      // // Fill empty elements with spaces
-      // for (size_t i = setDigits + 1; i < setBuffSize - 1; ++i) {
-      //   if (setBuff[i] == '\0') {
-      //     setBuff[i] = ' ';
-      //   }
-      // }
 
       lcd.print(tempBuff);
       lcd.print("C");
     }
   } else {
-    strcpy(setBuff, "---.-C ");
-    lcd.print(setBuff);
+    lcd.print("---.-C");
   }
 
   if (lastTemp != currentTemp) {
