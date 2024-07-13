@@ -4,12 +4,12 @@
 #include <Arduino.h>
 
 // PID constants
-#define Kp (80.00f)
-#define Ki (3.00f)
-#define Kd (150.00f)
+#define Kp (40.00f)
+#define Ki (10.00f)
+#define Kd (120.00f)
 
 // Maximum integral term
-#define INTEGRAL_CAP (150.0f)
+#define INTEGRAL_CAP (200.0f)
 
 // Maximum PWM duty cycle (0-255)
 #define PWM_MAX (255.0f)
