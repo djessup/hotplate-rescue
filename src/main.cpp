@@ -89,6 +89,45 @@ ISR(PCINT2_vect) {
 
 } // end of PCINT2_vect
 
+/**
+ * Configures the PWM timer for the given pin to Fast 8-bit PWM (Mode 5 for Timer 1, Mode 3 for Timer 0 and Timer 2)
+ * and configures the clock-select to no prescaler by setting CSn2:0 to "001".
+ */
+bool configurePwmPrescaler(uint8_t pin) {
+  switch (digitalPinToTimer(pin)) {
+    case TIMER0A:
+    case TIMER0B:
+      // Set Fast PWM mode, 8-bit for Timer 0 (Mode 3)
+      TCCR0A = (TCCR0A & 0b11111100) | bit(WGM00) | bit(WGM01); // WGM01:0 = 11
+      TCCR0B = (TCCR0B & 0b11111000) | bit(CS00); // CS02:0 = 001
+      break;
+    case TIMER1A:
+    case TIMER1B:
+      // Set Fast PWM mode, 8-bit for Timer 1 (Mode 5)
+      TCCR1A = (TCCR1A & 0b11111100) | bit(WGM10); // WGM11:10 = 01
+      TCCR1B = (TCCR1B & 0b11101000) | bit(WGM12) | bit(CS10); // WGM13:12 = 01, CS12:0 = 001
+      break;
+    case TIMER2A:
+    case TIMER2B:
+      // Set Fast PWM mode, 8-bit for Timer 2 (Mode 3)
+      TCCR2A = (TCCR2A & 0b11111100) | bit(WGM20) | bit(WGM21); // WGM21:0 = 11
+      TCCR2B = (TCCR2B & 0b11111000) | bit(CS20); // CS22:0 = 001
+      break;
+    case NOT_ON_TIMER:
+    default:
+      // If the pin is not on a timer, return false
+      return false;
+  }
+
+  return true;
+} // end of configurePwmPrescaler
+
+void startLcd() {
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.backlight();
+}
+
 void setup() {
 #if DEBUG
   debug_init();
@@ -105,14 +144,30 @@ void setup() {
   pinMode(ENCODER_PIN_DT, INPUT);
 
   Wire.begin(); // Initialize I2C communication
-  delay(500); // Wait for things to settle
+  delay(100); // Wait for things to settle
+  startLcd();
+
+  if (!configurePwmPrescaler(HEATER_PIN)) {
+    // Error handling if the pin does not support PWM
+
+    lcd.setCursor(0, 0);
+    lcd.print("*BAD HEATER PIN*");
+    lcd.setCursor(0, 1);
+    char errDetail[32] = {};
+    int errLen = sprintf(errDetail, "Pin %d has no PWM support", HEATER_PIN);
+    lcd.print(errDetail);
+    while (true) {
+      delay(300);
+      lcd.scrollDisplayLeft();
+    }
+  }
 
   encoderValue = static_cast<int>(setTemp);
 
   enablePinChangeInterrupt(ENCODER_PIN_CLK);
   enablePinChangeInterrupt(ENCODER_PIN_DT);
 
-  initDisplay();
+  printDisplayFurniture();
 
   temp.fillValue(readTemperature(), TEMP_SAMPLES);
   scheduler.addTask(soakTask);
@@ -213,9 +268,8 @@ float readTemperature() {
 /**
  * Starts the display and prints the static portions
  */
-void initDisplay() {
-  lcd.begin(16, 2);
-  lcd.backlight();
+void printDisplayFurniture() {
+  startLcd();
 
   lcd.setCursor(0, 0);
   lcd.print("Set:");
@@ -277,6 +331,26 @@ void updateDisplay() {
       break;
   }
   lcd.print(stateStr);
+
+  lcd.setCursor(12, 1);
+  if (currentState == SOAK || currentState == REFLOW) {
+    if (taskElapsed > 0) {
+      uint8_t mins = taskElapsed / 60;
+      uint8_t secs = taskElapsed % 60;
+      lcd.print(mins);
+      lcd.print(":");
+      if (secs < 10) {
+        lcd.print("0");
+      }
+      lcd.print(secs);
+    } else {
+      lcd.print("   ^");
+    }
+  } else if (currentState == COOLDOWN) {
+    lcd.print("   v");
+  } else {
+    lcd.print("    ");
+  }
 } // end of updateDisplay
 
 /**
@@ -390,7 +464,7 @@ void cooldownTaskHandler() {
   if (setTemp > PROFILE_COOLDOWN_TEMP) { // ramp-up to soak temp
     setTemp = max(setTemp - PROFILE_COOLDOWN_RAMP_RATE, PROFILE_COOLDOWN_TEMP);
   } else if (temp.getFastAverage() <= PROFILE_COOLDOWN_TEMP) { // hold soak temp for PROFILE_SOAK_DURATION
-      currentState = advanceState(currentState);
+    currentState = advanceState(currentState);
   }
   ++taskElapsed;
 }

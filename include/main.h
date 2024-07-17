@@ -61,7 +61,7 @@ float readTemperature();
 /**
  * DISPLAY
  */
-void initDisplay();
+void printDisplayFurniture();
 void updateDisplay();
 
 #endif //HOTPLATE_RESCUE_MAIN_H
